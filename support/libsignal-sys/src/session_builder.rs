@@ -215,7 +215,7 @@ mod test {
     extern "C" fn is_trusted_identity(
         address: *const signal_protocol_address,
         _key_data: *mut u8,
-        _key_len: size_t,
+        _key_len: usize,
         _user_data: *mut c_void,
     ) -> c_int {
         println!("is_trusted_identity {}", unsafe { (*address).to_string() });
@@ -252,7 +252,7 @@ mod test {
     extern "C" fn save_identity(
         _address: *const signal_protocol_address,
         _key_data: *mut u8,
-        _key_len: size_t,
+        _key_len: usize,
         _user_data: *mut c_void,
     ) -> c_int {
         println!("save_identity");
@@ -298,9 +298,9 @@ mod test {
     extern "C" fn store_session_func(
         _address: *const signal_protocol_address,
         record: *mut u8,
-        record_len: size_t,
+        record_len: usize,
         _user_record: *mut u8,
-        _user_record_len: size_t,
+        _user_record_len: usize,
         user_data: *mut c_void,
     ) -> c_int {
         let data: Rc<TestStoreData> = unsafe { Rc::from_raw(user_data as *const TestStoreData) };

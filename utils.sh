@@ -67,13 +67,27 @@ function setup_xcompile_envs() {
         TOOLCHAIN_PREFIX=${TARGET_TRIPLE}${ANDROID_API}
         LIB_SUFFIX=64
         ;;
+    x86_64-linux-gnu)
+        # Non-android targets will use the toolchain installed in $HOME/.mozbuild
+        # since it's the same as the gecko one.
+        TARGET_TRIPLE=x86_64-unknown-linux-gnu
+        TARGET_INCLUDE=${TARGET_TRIPLE}
+        ;;
     esac
 
     HOST_OS=$(uname -s)
 
     # Check that the BUILD_WITH_NDK_DIR environment variable is set
     # and build the .cargo/config file from it.
-    if [ -n "${BUILD_WITH_NDK_DIR}" ]; then
+    if [ "$TARGET_ARCH" = "x86_64-linux-gnu" ]; then
+        echo "Building for x86_64-linux-gnu"
+        export SYSROOT=
+        export SYS_INCLUDE_DIR=${SYSROOT}/usr/include
+        export TOOLCHAIN_CC=clang
+        export TOOLCHAIN_CXX=clang++
+        export LINKER=ld.lld
+        export LD=ld.lld
+    elif [ -n "${BUILD_WITH_NDK_DIR}" ]; then
 	if [ ! -d "${BUILD_WITH_NDK_DIR}" ]; then
             echo "${BUILD_WITH_NDK_DIR} doesn't exixt."
 	    exit 1
@@ -114,13 +128,19 @@ target = "${TARGET_TRIPLE}"
 [target.${TARGET_TRIPLE}]
 linker = "${TOOLCHAIN_CC}"
 rustflags = [
+  "-C", "opt-level=z",
+EOF
+
+    [[ "${TARGET_TRIPE}" != "x86_64-linux-gnu" ]] && cat <<EOF >>$CARGO_CONFIG
   "-C", "link-arg=--sysroot=${SYSROOT}",
   "-C", "link-arg=-L",
   "-C", "link-arg=${BUILD_WITH_NDK_DIR}/lib/gcc/${TARGET_TRIPLE}/4.9.x",
   "-C", "link-arg=-L",
   "-C", "link-arg=${BUILD_WITH_NDK_DIR}/sysroot/usr/lib/${TARGET_TRIPLE}/${ANDROID_API}",
   "-C", "link-arg=-Wl,-rpath,${GONK_DIR}/out/target/product/${GONK_PRODUCT}/system/lib${LIB_SUFFIX}",
-  "-C", "opt-level=z",
+EOF
+
+    cat <<EOF >>$CARGO_CONFIG
 ]
 EOF
 

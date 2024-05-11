@@ -211,9 +211,9 @@ mod test {
     extern "C" fn store_sender_key(
         _sender_key_name: *const signal_protocol_sender_key_name,
         record: *mut u8,
-        record_len: size_t,
+        record_len: usize,
         _user_record: *mut u8,
-        _user_record_len: size_t,
+        _user_record_len: usize,
         user_data: *mut c_void,
     ) -> c_int {
         let data: Rc<TestStoreData> = unsafe { Rc::from_raw(user_data as *const TestStoreData) };
