@@ -11,6 +11,8 @@ use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc;
 use std::thread;
+use systemd::daemon::listen_fds;
+use std::os::fd::FromRawFd;
 
 fn handle_client(
     mut stream: UnixStream,
@@ -110,30 +112,44 @@ fn handle_client(
 }
 
 pub fn start(run_context: &GlobalContext, telemetry: TelemetrySender) {
-    if run_context.config.general.socket_path.is_none() {
-        info!("No socket path configured.");
-        return;
-    }
+    let listener = if run_context.config.general.socket_path.is_none() {
+        match listen_fds(true) {
+            Ok(fds) => match fds.iter().next() {
+                Some(fd) => Ok(unsafe { UnixListener::from_raw_fd(fd) }),
+                None => {
+                    info!("No fd supplied.");
+                    return;
+                },
+            },
+            Err(err) => {
+                error!("Failed to receive the domain socket: {}", err);
+                return;
+            },
+        }
+    } else {
+        let path = run_context.config.general.socket_path.as_ref().unwrap();
 
-    let path = run_context.config.general.socket_path.as_ref().unwrap();
+        // Make sure the listener doesn't already exist.
+        let _ = ::std::fs::remove_file(path);
 
-    // Make sure the listener doesn't already exist.
-    let _ = ::std::fs::remove_file(path);
+        let listener = UnixListener::bind(path);
+        if let Err(err) = fchmodat(
+            None,
+            path.as_str(),
+            Mode::all(),
+            FchmodatFlags::FollowSymlink,
+        ) {
+            error!("Failed to chmod uds socket {}", err);
+        }
 
-    match UnixListener::bind(path) {
+        listener
+    };
+
+    match listener {
         Ok(listener) => {
             // Temporary fix for https://bugzilla.kaiostech.com/show_bug.cgi?id=98577
             // until we use a proper way to allow access to the uds socket from content
             // processes.
-            if let Err(err) = fchmodat(
-                None,
-                path.as_str(),
-                Mode::all(),
-                FchmodatFlags::FollowSymlink,
-            ) {
-                error!("Failed to chmod uds socket at {} : {}", path, err);
-            }
-
             let mut session_id_factory = IdFactory::new(0);
             for stream in listener.incoming() {
                 let session_id = session_id_factory.next_id();
@@ -152,7 +168,7 @@ pub fn start(run_context: &GlobalContext, telemetry: TelemetrySender) {
                 }
             }
         }
-        Err(err) => error!("Failed to bind socket at {} : {}", path, err),
+        Err(err) => error!("Failed to bind socket {}", err),
     }
 }
 
