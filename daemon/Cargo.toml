@@ -1,5 +1,6 @@
 [package]
 authors = ["Fabrice Desré <fabrice@desre.org>"]
+repository = "https://github.com/I-asked/api-daemon.git"
 edition = "2018"
 license = "Apache-2.0"
 name = "daemon"
