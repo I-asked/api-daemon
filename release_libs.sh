@@ -1,6 +1,9 @@
 #!/bin/bash
 
 set -x -e
+
+cd "$(dirname -- "$0")"
+
 BUILD_TYPE=${BUILD_TYPE:-prod}
 RELEASE_ROOT=${RELEASE_ROOT:-./prebuilts/http_root/api/v1}
 echo "Release libs to ${RELEASE_ROOT}"
