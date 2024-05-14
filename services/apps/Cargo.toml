@@ -30,7 +30,7 @@ url = "2.1"
 version-compare = "0.0.10"
 vhost_server = {path = "../../vhost"}
 zip = "0.5"
-zip_utils = {git = "ssh://git@git.kaiostech.com/KaiOS/zip_utils.git", branch = "master"}
+zip_utils = {git = "https://github.com/kaiostech/zip_utils.git", branch = "main"}
 
 [build-dependencies]
 common = {path = "../../common"}
