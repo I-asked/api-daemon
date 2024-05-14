@@ -6,10 +6,10 @@
   <p>
 
 [![crates.io](https://img.shields.io/crates/v/actix?label=latest)](https://crates.io/crates/actix)
-[![Documentation](https://docs.rs/actix/badge.svg?version=0.13.0)](https://docs.rs/actix/0.13.0)
-![Minimum Supported Rust Version](https://img.shields.io/badge/rustc-1.54+-ab6000.svg)
+[![Documentation](https://docs.rs/actix/badge.svg?version=0.12.0)](https://docs.rs/actix/0.12.0)
+[![Version](https://img.shields.io/badge/rustc-1.46+-ab6000.svg)](https://blog.rust-lang.org/2019/12/19/Rust-1.46.0.html)
 ![License](https://img.shields.io/crates/l/actix.svg)
-[![Dependency Status](https://deps.rs/crate/actix/0.13.0/status.svg)](https://deps.rs/crate/actix/0.13.0)
+[![Dependency Status](https://deps.rs/crate/actix/0.12.0/status.svg)](https://deps.rs/crate/actix/0.12.0)
 <br />
 [![build status](https://github.com/actix/actix/workflows/CI%20%28Linux%29/badge.svg?branch=master&event=push)](https://github.com/actix/actix/actions)
 [![codecov](https://codecov.io/gh/actix/actix/branch/master/graph/badge.svg)](https://codecov.io/gh/actix/actix)
@@ -32,7 +32,7 @@
 - Uses [futures](https://crates.io/crates/futures) for asynchronous message handling
 - Actor supervision
 - Typed messages (No `Any` type)
-- Runs on stable Rust 1.54+
+- Runs on stable Rust 1.46+
 
 ## Usage
 
@@ -65,25 +65,25 @@ In order to define an actor you need to define a struct and have it implement
 the [`Actor`](https://actix.github.io/actix/actix/trait.Actor.html) trait.
 
 ```rust
-use actix::{Actor, Context, System};
+use actix::{Actor, Addr, Context, System};
 
 struct MyActor;
 
 impl Actor for MyActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         println!("I am alive!");
         System::current().stop(); // <- stop system
     }
 }
 
 fn main() {
-    let system = System::new();
+    let mut system = System::new();
 
-    let _addr = system.block_on(async { MyActor.start() });
+    let addr = system.block_on(async { MyActor.start() });
 
-    system.run().unwrap();
+    system.run();
 }
 ```
 
@@ -93,8 +93,8 @@ implement the `started`, `stopping` and `stopped` methods of the Actor trait. `s
 when the actor starts and `stopping` when the actor finishes. Check the API docs
 for more information on [the actor lifecycle].
 
-[Actor trait]: https://actix.github.io/actix/actix/trait.Actor.html
-[the actor lifecycle]: https://actix.github.io/actix/actix/trait.Actor.html#actor-lifecycle
+[Actor trait]: [https://actix.github.io/actix/actix/trait.Actor.html]
+[the actor lifecycle]: [https://actix.github.io/actix/actix/trait.Actor.html#actor-lifecycle]
 
 ### Handle Messages
 
@@ -124,7 +124,7 @@ impl Actor for Calculator {
 impl Handler<Sum> for Calculator {
     type Result = usize; // <- Message response type
 
-    fn handle(&mut self, msg: Sum, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: Sum, ctx: &mut Context<Self>) -> Self::Result {
         msg.0 + msg.1
     }
 }
@@ -196,11 +196,11 @@ impl Handler<Ping> for Game {
 }
 
 fn main() {
-    let system = System::new();
+    let mut system = System::new();
 
     // To get a Recipient object, we need to use a different builder method
     // which will allow postponing actor creation
-    let _addr = system.block_on(async {
+    let addr = system.block_on(async {
         Game::create(|ctx| {
             // now we can get an address of the first actor and create the second actor
             let addr = ctx.address();
@@ -224,7 +224,7 @@ fn main() {
         });
     });
 
-    system.run().unwrap();
+    system.run();
 }
 ```
 
@@ -232,7 +232,7 @@ fn main() {
 
 See this [chat example] which shows more comprehensive usage in a networking client/server service.
 
-[chat example]: https://github.com/actix/examples/tree/HEAD/websockets/chat-tcp
+[chat example]: https://github.com/actix/examples/tree/HEAD/websockets/tcp-chat
 
 ## Contributing
 

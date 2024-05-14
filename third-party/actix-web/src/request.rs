@@ -219,7 +219,7 @@ impl HttpRequest {
     /// for urls that do not contain variable parts.
     pub fn url_for_static(&self, name: &str) -> Result<url::Url, UrlGenerationError> {
         const NO_PARAMS: [&str; 0] = [];
-        self.url_for(name, NO_PARAMS)
+        self.url_for(name, &NO_PARAMS)
     }
 
     /// Get a reference to a `ResourceMap` of current application.
@@ -253,14 +253,14 @@ impl HttpRequest {
     #[inline]
     pub fn connection_info(&self) -> Ref<'_, ConnectionInfo> {
         if !self.extensions().contains::<ConnectionInfo>() {
-            let info = ConnectionInfo::new(self.head(), self.app_config());
+            let info = ConnectionInfo::new(self.head(), &*self.app_config());
             self.extensions_mut().insert(info);
         }
 
         Ref::map(self.extensions(), |data| data.get().unwrap())
     }
 
-    /// Returns a reference to the application's connection configuration.
+    /// App config
     #[inline]
     pub fn app_config(&self) -> &AppConfig {
         self.app_state().config()
@@ -306,7 +306,7 @@ impl HttpRequest {
 
     #[inline]
     fn app_state(&self) -> &AppInitServiceState {
-        &self.inner.app_state
+        &*self.inner.app_state
     }
 
     /// Load request cookies.
@@ -381,15 +381,11 @@ impl Drop for HttpRequest {
                 inner.app_data.truncate(1);
 
                 // Inner is borrowed mut here and; get req data mutably to reduce borrow check. Also
-                // we know the req_data Rc will not have any clones at this point to unwrap is okay.
+                // we know the req_data Rc will not have any cloned at this point to unwrap is okay.
                 Rc::get_mut(&mut inner.extensions)
                     .unwrap()
                     .get_mut()
                     .clear();
-
-                // We can't use the same trick as req data because the conn_data is held by the
-                // dispatcher, too.
-                inner.conn_data = None;
 
                 // a re-borrow of pool is necessary here.
                 let req = Rc::clone(&self.inner);
@@ -435,28 +431,16 @@ impl fmt::Debug for HttpRequest {
             self.inner.head.method,
             self.path()
         )?;
-
         if !self.query_string().is_empty() {
             writeln!(f, "  query: ?{:?}", self.query_string())?;
         }
-
         if !self.match_info().is_empty() {
             writeln!(f, "  params: {:?}", self.match_info())?;
         }
-
         writeln!(f, "  headers:")?;
-
         for (key, val) in self.headers().iter() {
-            match key {
-                // redact sensitive header values from debug output
-                &crate::http::header::AUTHORIZATION
-                | &crate::http::header::PROXY_AUTHORIZATION
-                | &crate::http::header::COOKIE => writeln!(f, "    {:?}: {:?}", key, "*redacted*")?,
-
-                _ => writeln!(f, "    {:?}: {:?}", key, val)?,
-            }
+            writeln!(f, "    {:?}: {:?}", key, val)?;
         }
-
         Ok(())
     }
 }
@@ -593,14 +577,14 @@ mod tests {
             .to_http_request();
 
         assert_eq!(
-            req.url_for("unknown", ["test"]),
+            req.url_for("unknown", &["test"]),
             Err(UrlGenerationError::ResourceNotFound)
         );
         assert_eq!(
-            req.url_for("index", ["test"]),
+            req.url_for("index", &["test"]),
             Err(UrlGenerationError::NotEnoughElements)
         );
-        let url = req.url_for("index", ["test", "html"]);
+        let url = req.url_for("index", &["test", "html"]);
         assert_eq!(
             url.ok().unwrap().as_str(),
             "http://www.rust-lang.org/user/test.html"
@@ -656,7 +640,7 @@ mod tests {
         rmap.add(&mut rdef, None);
 
         let req = TestRequest::default().rmap(rmap).to_http_request();
-        let url = req.url_for("youtube", ["oHg5SJYRHA0"]);
+        let url = req.url_for("youtube", &["oHg5SJYRHA0"]);
         assert_eq!(
             url.ok().unwrap().as_str(),
             "https://youtube.com/watch/oHg5SJYRHA0"
@@ -665,13 +649,13 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_drop_http_request_pool() {
-        let srv = init_service(
-            App::new().service(web::resource("/").to(|req: HttpRequest| {
+        let srv = init_service(App::new().service(web::resource("/").to(
+            |req: HttpRequest| {
                 HttpResponse::Ok()
                     .insert_header(("pool_cap", req.app_state().pool().cap))
                     .finish()
-            })),
-        )
+            },
+        )))
         .await;
 
         let req = TestRequest::default().to_request();
@@ -777,8 +761,10 @@ mod tests {
         assert_eq!(body, Bytes::from_static(b"1"));
     }
 
+    // allow deprecated App::data
+    #[allow(deprecated)]
     #[actix_rt::test]
-    async fn test_app_data_dropped() {
+    async fn test_extensions_dropped() {
         struct Tracker {
             pub dropped: bool,
         }
@@ -794,7 +780,7 @@ mod tests {
         let tracker = Rc::new(RefCell::new(Tracker { dropped: false }));
         {
             let tracker2 = Rc::clone(&tracker);
-            let srv = init_service(App::new().service(web::resource("/").to(
+            let srv = init_service(App::new().data(10u32).service(web::resource("/").to(
                 move |req: HttpRequest| {
                     req.extensions_mut().insert(Foo {
                         tracker: Rc::clone(&tracker2),
@@ -819,7 +805,10 @@ mod tests {
                 web::scope("/user/{id}")
                     .service(web::resource("/profile").route(web::get().to(
                         move |req: HttpRequest| {
-                            assert_eq!(req.match_pattern(), Some("/user/{id}/profile".to_owned()));
+                            assert_eq!(
+                                req.match_pattern(),
+                                Some("/user/{id}/profile".to_owned())
+                            );
 
                             HttpResponse::Ok().finish()
                         },
@@ -919,48 +908,5 @@ mod tests {
         assert_eq!(bar_resp.status(), StatusCode::OK);
         let body = read_body(bar_resp).await;
         assert_eq!(body, "http://localhost:8080/bar/nested");
-    }
-
-    #[test]
-    fn authorization_header_hidden_in_debug() {
-        let authorization_header = "Basic bXkgdXNlcm5hbWU6bXkgcGFzc3dvcmQK";
-        let req = TestRequest::get()
-            .insert_header((crate::http::header::AUTHORIZATION, authorization_header))
-            .to_http_request();
-
-        assert!(!format!("{:?}", req).contains(authorization_header));
-    }
-
-    #[test]
-    fn proxy_authorization_header_hidden_in_debug() {
-        let proxy_authorization_header = "secret value";
-        let req = TestRequest::get()
-            .insert_header((
-                crate::http::header::PROXY_AUTHORIZATION,
-                proxy_authorization_header,
-            ))
-            .to_http_request();
-
-        assert!(!format!("{:?}", req).contains(proxy_authorization_header));
-    }
-
-    #[test]
-    fn cookie_header_hidden_in_debug() {
-        let cookie_header = "secret";
-        let req = TestRequest::get()
-            .insert_header((crate::http::header::COOKIE, cookie_header))
-            .to_http_request();
-
-        assert!(!format!("{:?}", req).contains(cookie_header));
-    }
-
-    #[test]
-    fn other_header_visible_in_debug() {
-        let location_header = "192.0.0.1";
-        let req = TestRequest::get()
-            .insert_header((crate::http::header::LOCATION, location_header))
-            .to_http_request();
-
-        assert!(format!("{:?}", req).contains(location_header));
     }
 }

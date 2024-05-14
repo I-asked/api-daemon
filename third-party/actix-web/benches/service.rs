@@ -1,12 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
-
 use actix_service::Service;
-use actix_web::{
-    dev::{ServiceRequest, ServiceResponse},
-    test::{init_service, ok_service, TestRequest},
-    web, App, Error, HttpResponse,
-};
+use actix_web::dev::{ServiceRequest, ServiceResponse};
+use actix_web::{web, App, Error, HttpResponse};
 use criterion::{criterion_main, Criterion};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use actix_web::test::{init_service, ok_service, TestRequest};
 
 /// Criterion Benchmark for async Service
 /// Should be used from within criterion group:

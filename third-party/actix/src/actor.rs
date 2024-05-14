@@ -463,7 +463,7 @@ where
 /// A handle to a spawned future.
 ///
 /// Can be used to cancel the future.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Eq, PartialEq, Debug, Copy, Clone, Hash)]
 pub struct SpawnHandle(usize);
 
 impl SpawnHandle {
@@ -474,5 +474,11 @@ impl SpawnHandle {
     #[doc(hidden)]
     pub fn into_usize(self) -> usize {
         self.0
+    }
+}
+
+impl Default for SpawnHandle {
+    fn default() -> SpawnHandle {
+        SpawnHandle(0)
     }
 }

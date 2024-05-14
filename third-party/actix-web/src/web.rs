@@ -11,23 +11,23 @@
 //! - [`Bytes`]: Raw payload
 //!
 //! # Responders
-//! - [`Json`]: JSON response
-//! - [`Form`]: URL-encoded response
-//! - [`Bytes`]: Raw bytes response
-//! - [`Redirect`](Redirect::to): Convenient redirect responses
+//! - [`Json`]: JSON request payload
+//! - [`Bytes`]: Raw request payload
 
-use std::{borrow::Cow, future::Future};
+use std::future::Future;
 
 use actix_router::IntoPatterns;
 pub use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-pub use crate::{
-    config::ServiceConfig, data::Data, redirect::Redirect, request_data::ReqData, types::*,
-};
 use crate::{
     error::BlockingError, http::Method, service::WebService, FromRequest, Handler, Resource,
     Responder, Route, Scope,
 };
+
+pub use crate::config::ServiceConfig;
+pub use crate::data::Data;
+pub use crate::request_data::ReqData;
+pub use crate::types::*;
 
 /// Creates a new resource for a specific path.
 ///
@@ -45,7 +45,6 @@ use crate::{
 /// For instance, to route `GET`-requests on any route matching `/users/{userid}/{friend}` and store
 /// `userid` and `friend` in the exposed `Path` object:
 ///
-/// # Examples
 /// ```
 /// use actix_web::{web, App, HttpResponse};
 ///
@@ -75,7 +74,6 @@ pub fn resource<T: IntoPatterns>(path: T) -> Resource {
 /// - `/{project_id}/path2`
 /// - `/{project_id}/path3`
 ///
-/// # Examples
 /// ```
 /// use actix_web::{web, App, HttpResponse};
 ///
@@ -183,22 +181,6 @@ where
 /// ```
 pub fn service<T: IntoPatterns>(path: T) -> WebService {
     WebService::new(path)
-}
-
-/// Create a relative or absolute redirect.
-///
-/// See [`Redirect`] docs for usage details.
-///
-/// # Examples
-/// ```
-/// use actix_web::{web, App};
-///
-/// let app = App::new()
-///     // the client will resolve this redirect to /api/to-path
-///     .service(web::redirect("/api/from-path", "to-path"));
-/// ```
-pub fn redirect(from: impl Into<Cow<'static, str>>, to: impl Into<Cow<'static, str>>) -> Redirect {
-    Redirect::new(from, to)
 }
 
 /// Executes blocking function on a thread pool, returns future that resolves to result of the

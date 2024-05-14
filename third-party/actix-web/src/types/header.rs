@@ -2,7 +2,7 @@
 
 use std::{fmt, ops};
 
-use actix_utils::future::{ready, Ready};
+use actix_utils::future::{err, ok, Ready};
 
 use crate::{
     dev::Payload, error::ParseError, extract::FromRequest, http::header::Header as ParseHeader,
@@ -66,8 +66,8 @@ where
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         match ParseHeader::parse(req) {
-            Ok(header) => ready(Ok(Header(header))),
-            Err(err) => ready(Err(err)),
+            Ok(header) => ok(Header(header)),
+            Err(e) => err(e),
         }
     }
 }
@@ -75,10 +75,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        http::{header, Method},
-        test::TestRequest,
-    };
+    use crate::http::{header, Method};
+    use crate::test::TestRequest;
 
     #[actix_rt::test]
     async fn test_header_extract() {

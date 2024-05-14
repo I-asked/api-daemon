@@ -13,15 +13,14 @@ use crate::{
     body::MessageBody,
     data::Data,
     dev::{ensure_leading_slash, AppService, ResourceDef},
-    guard::{self, Guard},
+    guard::Guard,
     handler::Handler,
-    http::header,
     route::{Route, RouteService},
     service::{
         BoxedHttpService, BoxedHttpServiceFactory, HttpServiceFactory, ServiceRequest,
         ServiceResponse,
     },
-    web, Error, FromRequest, HttpResponse, Responder,
+    Error, FromRequest, HttpResponse, Responder,
 };
 
 /// A collection of [`Route`]s that respond to the same path pattern.
@@ -38,16 +37,11 @@ use crate::{
 ///
 /// let app = App::new().service(
 ///     web::resource("/")
-///         .get(|| HttpResponse::Ok())
-///         .post(|| async { "Hello World!" })
-/// );
+///         .route(web::get().to(|| HttpResponse::Ok())));
 /// ```
 ///
-/// If no matching route is found, an empty 405 response is returned which includes an
-/// [appropriate Allow header][RFC 9110 §15.5.6]. This default behavior can be overridden using
-/// [`default_service()`](Self::default_service).
-///
-/// [RFC 9110 §15.5.6]: https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.6
+/// If no matching route could be found, *405* response code get returned. Default behavior could be
+/// overridden with `default_resource()` method.
 pub struct Resource<T = ResourceEndpoint> {
     endpoint: T,
     rdef: Patterns,
@@ -60,7 +54,6 @@ pub struct Resource<T = ResourceEndpoint> {
 }
 
 impl Resource {
-    /// Constructs new resource that matches a `path` pattern.
     pub fn new<T: IntoPatterns>(path: T) -> Resource {
         let fref = Rc::new(RefCell::new(None));
 
@@ -73,19 +66,7 @@ impl Resource {
             guards: Vec::new(),
             app_data: None,
             default: boxed::factory(fn_service(|req: ServiceRequest| async {
-                use crate::HttpMessage as _;
-
-                let allowed = req.extensions().get::<guard::RegisteredMethods>().cloned();
-
-                if let Some(methods) = allowed {
-                    Ok(req.into_response(
-                        HttpResponse::MethodNotAllowed()
-                            .insert_header(header::Allow(methods.0))
-                            .finish(),
-                    ))
-                } else {
-                    Ok(req.into_response(HttpResponse::MethodNotAllowed()))
-                }
+                Ok(req.into_response(HttpResponse::MethodNotAllowed()))
             })),
         }
     }
@@ -328,33 +309,22 @@ where
         }
     }
 
-    /// Sets the default service to be used if no matching route is found.
+    /// Default service to be used if no matching route could be found.
     ///
-    /// Unlike [`Scope`]s, a `Resource` does _not_ inherit its parent's default service. You can
-    /// use a [`Route`] as default service.
+    /// You can use a [`Route`] as default service.
     ///
-    /// If a custom default service is not registered, an empty `405 Method Not Allowed` response
-    /// with an appropriate Allow header will be sent instead.
-    ///
-    /// # Examples
-    /// ```
-    /// use actix_web::{App, HttpResponse, web};
-    ///
-    /// let resource = web::resource("/test")
-    ///     .route(web::get().to(HttpResponse::Ok))
-    ///     .default_service(web::to(|| {
-    ///         HttpResponse::BadRequest()
-    ///     }));
-    ///
-    /// App::new().service(resource);
-    /// ```
-    ///
-    /// [`Scope`]: crate::Scope
+    /// If a default service is not registered, an empty `405 Method Not Allowed` response will be
+    /// sent to the client instead. Unlike [`Scope`](crate::Scope)s, a [`Resource`] does **not**
+    /// inherit its parent's default service.
     pub fn default_service<F, U>(mut self, f: F) -> Self
     where
         F: IntoServiceFactory<U, ServiceRequest>,
-        U: ServiceFactory<ServiceRequest, Config = (), Response = ServiceResponse, Error = Error>
-            + 'static,
+        U: ServiceFactory<
+                ServiceRequest,
+                Config = (),
+                Response = ServiceResponse,
+                Error = Error,
+            > + 'static,
         U::InitError: fmt::Debug,
     {
         // create and configure default resource
@@ -365,45 +335,6 @@ where
 
         self
     }
-}
-
-macro_rules! route_shortcut {
-    ($method_fn:ident, $method_upper:literal) => {
-        #[doc = concat!(" Adds a ", $method_upper, " route.")]
-        ///
-        /// Use [`route`](Self::route) if you need to add additional guards.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// # use actix_web::web;
-        /// web::resource("/")
-        #[doc = concat!("    .", stringify!($method_fn), "(|| async { \"Hello World!\" })")]
-        /// # ;
-        /// ```
-        pub fn $method_fn<F, Args>(self, handler: F) -> Self
-        where
-            F: Handler<Args>,
-            Args: FromRequest + 'static,
-            F::Output: Responder + 'static,
-        {
-            self.route(web::$method_fn().to(handler))
-        }
-    };
-}
-
-/// Concise routes for well-known HTTP methods.
-impl<T> Resource<T>
-where
-    T: ServiceFactory<ServiceRequest, Config = (), Error = Error, InitError = ()>,
-{
-    route_shortcut!(get, "GET");
-    route_shortcut!(post, "POST");
-    route_shortcut!(put, "PUT");
-    route_shortcut!(patch, "PATCH");
-    route_shortcut!(delete, "DELETE");
-    route_shortcut!(head, "HEAD");
-    route_shortcut!(trace, "TRACE");
 }
 
 impl<T, B> HttpServiceFactory for Resource<T>
@@ -621,8 +552,10 @@ mod tests {
                         let fut = srv.call(req);
                         async {
                             fut.await.map(|mut res| {
-                                res.headers_mut()
-                                    .insert(header::CONTENT_TYPE, HeaderValue::from_static("0001"));
+                                res.headers_mut().insert(
+                                    header::CONTENT_TYPE,
+                                    HeaderValue::from_static("0001"),
+                                );
                                 res
                             })
                         }
@@ -654,9 +587,12 @@ mod tests {
 
     #[actix_rt::test]
     async fn test_pattern() {
-        let srv = init_service(App::new().service(
-            web::resource(["/test", "/test2"]).to(|| async { Ok::<_, Error>(HttpResponse::Ok()) }),
-        ))
+        let srv = init_service(
+            App::new().service(
+                web::resource(["/test", "/test2"])
+                    .to(|| async { Ok::<_, Error>(HttpResponse::Ok()) }),
+            ),
+        )
         .await;
         let req = TestRequest::with_uri("/test").to_request();
         let resp = call_service(&srv, req).await;
@@ -670,11 +606,7 @@ mod tests {
     async fn test_default_resource() {
         let srv = init_service(
             App::new()
-                .service(
-                    web::resource("/test")
-                        .route(web::get().to(HttpResponse::Ok))
-                        .route(web::delete().to(HttpResponse::Ok)),
-                )
+                .service(web::resource("/test").route(web::get().to(HttpResponse::Ok)))
                 .default_service(|r: ServiceRequest| {
                     ok(r.into_response(HttpResponse::BadRequest()))
                 }),
@@ -689,10 +621,6 @@ mod tests {
             .to_request();
         let resp = call_service(&srv, req).await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(
-            resp.headers().get(header::ALLOW).unwrap().as_bytes(),
-            b"GET, DELETE"
-        );
 
         let srv = init_service(
             App::new().service(
@@ -795,18 +723,17 @@ mod tests {
     #[allow(deprecated)]
     #[actix_rt::test]
     async fn test_data_default_service() {
-        let srv =
-            init_service(
-                App::new().data(1usize).service(
-                    web::resource("/test")
-                        .data(10usize)
-                        .default_service(web::to(|data: web::Data<usize>| {
-                            assert_eq!(**data, 10);
-                            HttpResponse::Ok()
-                        })),
-                ),
-            )
-            .await;
+        let srv = init_service(
+            App::new().data(1usize).service(
+                web::resource("/test")
+                    .data(10usize)
+                    .default_service(web::to(|data: web::Data<usize>| {
+                        assert_eq!(**data, 10);
+                        HttpResponse::Ok()
+                    })),
+            ),
+        )
+        .await;
 
         let req = TestRequest::get().uri("/test").to_request();
         let resp = call_service(&srv, req).await;

@@ -49,7 +49,7 @@ use crate::{
 /// ```
 ///
 /// # Responder
-/// It may be desirable to use a concrete type for a response with multiple branches. As long as
+/// It may be desireable to use a concrete type for a response with multiple branches. As long as
 /// both types implement `Responder`, so will the `Either` type, enabling it to be used as a
 /// handler's return type.
 ///
@@ -73,7 +73,7 @@ use crate::{
 ///     }
 /// }
 /// ```
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Either<L, R> {
     /// A value of type `L`.
     Left(L),
@@ -238,7 +238,8 @@ where
                     match res {
                         Ok(bytes) => {
                             let fallback = bytes.clone();
-                            let left = L::from_request(this.req, &mut payload_from_bytes(bytes));
+                            let left =
+                                L::from_request(this.req, &mut payload_from_bytes(bytes));
                             EitherExtractState::Left { left, fallback }
                         }
                         Err(err) => break Err(EitherExtractError::Bytes(err)),
@@ -265,7 +266,10 @@ where
                     match res {
                         Ok(data) => break Ok(Either::Right(data)),
                         Err(err) => {
-                            break Err(EitherExtractError::Extract(left_err.take().unwrap(), err));
+                            break Err(EitherExtractError::Extract(
+                                left_err.take().unwrap(),
+                                err,
+                            ));
                         }
                     }
                 }
@@ -300,7 +304,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_either_extract_first_try() {
         let (req, mut pl) = TestRequest::default()
-            .set_form(TestForm {
+            .set_form(&TestForm {
                 hello: "world".to_owned(),
             })
             .to_http_parts();
@@ -316,7 +320,7 @@ mod tests {
     #[actix_rt::test]
     async fn test_either_extract_fallback() {
         let (req, mut pl) = TestRequest::default()
-            .set_json(TestForm {
+            .set_json(&TestForm {
                 hello: "world".to_owned(),
             })
             .to_http_parts();
@@ -335,29 +339,31 @@ mod tests {
             .set_payload(Bytes::from_static(b"!@$%^&*()"))
             .to_http_parts();
 
-        let payload =
-            Either::<Either<Form<TestForm>, Json<TestForm>>, Bytes>::from_request(&req, &mut pl)
-                .await
-                .unwrap()
-                .unwrap_right();
+        let payload = Either::<Either<Form<TestForm>, Json<TestForm>>, Bytes>::from_request(
+            &req, &mut pl,
+        )
+        .await
+        .unwrap()
+        .unwrap_right();
         assert_eq!(&payload.as_ref(), &b"!@$%^&*()");
     }
 
     #[actix_rt::test]
     async fn test_either_extract_recursive_fallback_inner() {
         let (req, mut pl) = TestRequest::default()
-            .set_json(TestForm {
+            .set_json(&TestForm {
                 hello: "world".to_owned(),
             })
             .to_http_parts();
 
-        let form =
-            Either::<Either<Form<TestForm>, Json<TestForm>>, Bytes>::from_request(&req, &mut pl)
-                .await
-                .unwrap()
-                .unwrap_left()
-                .unwrap_right()
-                .into_inner();
+        let form = Either::<Either<Form<TestForm>, Json<TestForm>>, Bytes>::from_request(
+            &req, &mut pl,
+        )
+        .await
+        .unwrap()
+        .unwrap_left()
+        .unwrap_right()
+        .into_inner();
         assert_eq!(&form.hello, "world");
     }
 }

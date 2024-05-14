@@ -3,9 +3,12 @@ use std::{any::type_name, ops::Deref, sync::Arc};
 use actix_http::Extensions;
 use actix_utils::future::{err, ok, Ready};
 use futures_core::future::LocalBoxFuture;
-use serde::{de, Serialize};
+use serde::Serialize;
 
-use crate::{dev::Payload, error, Error, FromRequest, HttpRequest};
+use crate::{
+    dev::Payload, error::ErrorInternalServerError, extract::FromRequest, request::HttpRequest,
+    Error,
+};
 
 /// Data factory.
 pub(crate) trait DataFactory {
@@ -32,8 +35,8 @@ pub(crate) type FnDataFactory =
 /// Since the Actix Web router layers application data, the returned object will reference the
 /// "closest" instance of the type. For example, if an `App` stores a `u32`, a nested `Scope`
 /// also stores a `u32`, and the delegated request handler falls within that `Scope`, then
-/// extracting a `web::Data<u32>` for that handler will return the `Scope`'s instance. However,
-/// using the same router set up and a request that does not get captured by the `Scope`,
+/// extracting a `web::<Data<u32>>` for that handler will return the `Scope`'s instance.
+/// However, using the same router set up and a request that does not get captured by the `Scope`,
 /// `web::<Data<u32>>` would return the `App`'s instance.
 ///
 /// If route data is not set for a handler, using `Data<T>` extractor would cause a `500 Internal
@@ -69,7 +72,7 @@ pub(crate) type FnDataFactory =
 ///     HttpResponse::Ok()
 /// }
 ///
-/// /// Alternatively, use the `HttpRequest::app_data` method to access data in a handler.
+/// /// Alteratively, use the `HttpRequest::app_data` method to access data in a handler.
 /// async fn index_alt(req: HttpRequest) -> impl Responder {
 ///     let data = req.app_data::<Data<Mutex<MyData>>>().unwrap();
 ///     let mut my_data = data.lock().unwrap();
@@ -118,19 +121,13 @@ impl<T: ?Sized> Deref for Data<T> {
 
 impl<T: ?Sized> Clone for Data<T> {
     fn clone(&self) -> Data<T> {
-        Data(Arc::clone(&self.0))
+        Data(self.0.clone())
     }
 }
 
 impl<T: ?Sized> From<Arc<T>> for Data<T> {
     fn from(arc: Arc<T>) -> Self {
         Data(arc)
-    }
-}
-
-impl<T: Default> Default for Data<T> {
-    fn default() -> Self {
-        Data::new(T::default())
     }
 }
 
@@ -143,17 +140,6 @@ where
         S: serde::Serializer,
     {
         self.0.serialize(serializer)
-    }
-}
-impl<'de, T> de::Deserialize<'de> for Data<T>
-where
-    T: de::Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        Ok(Data::new(T::deserialize(deserializer)?))
     }
 }
 
@@ -174,7 +160,7 @@ impl<T: ?Sized + 'static> FromRequest for Data<T> {
                 req.match_name().unwrap_or_else(|| req.path())
             );
 
-            err(error::ErrorInternalServerError(
+            err(ErrorInternalServerError(
                 "Requested application data is not configured correctly. \
                 View/enable debug logs for more details.",
             ))
@@ -203,14 +189,12 @@ mod tests {
     #[allow(deprecated)]
     #[actix_rt::test]
     async fn test_data_extractor() {
-        let srv = init_service(
-            App::new()
-                .data("TEST".to_string())
-                .service(web::resource("/").to(|data: web::Data<String>| {
-                    assert_eq!(data.to_lowercase(), "test");
-                    HttpResponse::Ok()
-                })),
-        )
+        let srv = init_service(App::new().data("TEST".to_string()).service(
+            web::resource("/").to(|data: web::Data<String>| {
+                assert_eq!(data.to_lowercase(), "test");
+                HttpResponse::Ok()
+            }),
+        ))
         .await;
 
         let req = TestRequest::default().to_request();
@@ -305,17 +289,16 @@ mod tests {
     #[allow(deprecated)]
     #[actix_rt::test]
     async fn test_override_data() {
-        let srv = init_service(
-            App::new()
-                .data(1usize)
-                .service(web::resource("/").data(10usize).route(web::get().to(
+        let srv =
+            init_service(App::new().data(1usize).service(
+                web::resource("/").data(10usize).route(web::get().to(
                     |data: web::Data<usize>| {
                         assert_eq!(**data, 10);
                         HttpResponse::Ok()
                     },
-                ))),
-        )
-        .await;
+                )),
+            ))
+            .await;
 
         let req = TestRequest::default().to_request();
         let resp = srv.call(req).await.unwrap();

@@ -60,8 +60,8 @@ actix = "0.12"
 actix-cors = "0.6"
 actix-http = "3.0"
 actix-rt = "2.6"
-actix-web = "4.0"
-actix-web-actors = "4.0"
+actix-web = "=4.0.0"
+actix-web-actors = "=4.0.0"
 apps_service = {path = "../services/apps", optional = true}
 async-std = "1.6"
 audiovolume_service = {path = "../services/audiovolumemanager", optional = true}

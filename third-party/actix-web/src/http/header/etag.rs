@@ -49,50 +49,50 @@ crate::http::header::common_header! {
     test_parse_and_format {
         // From the RFC
         crate::http::header::common_header_test!(test1,
-            [b"\"xyzzy\""],
+            vec![b"\"xyzzy\""],
             Some(ETag(EntityTag::new_strong("xyzzy".to_owned()))));
         crate::http::header::common_header_test!(test2,
-            [b"W/\"xyzzy\""],
+            vec![b"W/\"xyzzy\""],
             Some(ETag(EntityTag::new_weak("xyzzy".to_owned()))));
         crate::http::header::common_header_test!(test3,
-            [b"\"\""],
+            vec![b"\"\""],
             Some(ETag(EntityTag::new_strong("".to_owned()))));
         // Own tests
         crate::http::header::common_header_test!(test4,
-            [b"\"foobar\""],
+            vec![b"\"foobar\""],
             Some(ETag(EntityTag::new_strong("foobar".to_owned()))));
         crate::http::header::common_header_test!(test5,
-            [b"\"\""],
+            vec![b"\"\""],
             Some(ETag(EntityTag::new_strong("".to_owned()))));
         crate::http::header::common_header_test!(test6,
-            [b"W/\"weak-etag\""],
+            vec![b"W/\"weak-etag\""],
             Some(ETag(EntityTag::new_weak("weak-etag".to_owned()))));
         crate::http::header::common_header_test!(test7,
-            [b"W/\"\x65\x62\""],
+            vec![b"W/\"\x65\x62\""],
             Some(ETag(EntityTag::new_weak("\u{0065}\u{0062}".to_owned()))));
         crate::http::header::common_header_test!(test8,
-            [b"W/\"\""],
+            vec![b"W/\"\""],
             Some(ETag(EntityTag::new_weak("".to_owned()))));
         crate::http::header::common_header_test!(test9,
-            [b"no-dquotes"],
+            vec![b"no-dquotes"],
             None::<ETag>);
         crate::http::header::common_header_test!(test10,
-            [b"w/\"the-first-w-is-case-sensitive\""],
+            vec![b"w/\"the-first-w-is-case-sensitive\""],
             None::<ETag>);
         crate::http::header::common_header_test!(test11,
-            [b""],
+            vec![b""],
             None::<ETag>);
         crate::http::header::common_header_test!(test12,
-            [b"\"unmatched-dquotes1"],
+            vec![b"\"unmatched-dquotes1"],
             None::<ETag>);
         crate::http::header::common_header_test!(test13,
-            [b"unmatched-dquotes2\""],
+            vec![b"unmatched-dquotes2\""],
             None::<ETag>);
         crate::http::header::common_header_test!(test14,
-            [b"matched-\"dquotes\""],
+            vec![b"matched-\"dquotes\""],
             None::<ETag>);
         crate::http::header::common_header_test!(test15,
-            [b"\""],
+            vec![b"\""],
             None::<ETag>);
     }
 }

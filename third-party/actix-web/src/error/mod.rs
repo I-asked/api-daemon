@@ -5,10 +5,14 @@
 // expanded manually.
 //
 // See <https://github.com/rust-lang/rust/issues/83375>
-pub use actix_http::error::{ContentTypeError, DispatchError, HttpError, ParseError, PayloadError};
+pub use actix_http::error::{
+    ContentTypeError, DispatchError, HttpError, ParseError, PayloadError,
+};
+
 use derive_more::{Display, Error, From};
 use serde_json::error::Error as JsonError;
-use serde_urlencoded::{de::Error as FormDeError, ser::Error as FormError};
+use serde_urlencoded::de::Error as FormDeError;
+use serde_urlencoded::ser::Error as FormError;
 use url::ParseError as UrlParseError;
 
 use crate::http::StatusCode;
@@ -19,8 +23,10 @@ mod internal;
 mod macros;
 mod response_error;
 
-pub(crate) use self::macros::{downcast_dyn, downcast_get_type_id};
-pub use self::{error::Error, internal::*, response_error::ResponseError};
+pub use self::error::Error;
+pub use self::internal::*;
+pub use self::response_error::ResponseError;
+pub(crate) use macros::{downcast_dyn, downcast_get_type_id};
 
 /// A convenience [`Result`](std::result::Result) for Actix Web operations.
 ///
@@ -36,7 +42,7 @@ pub struct BlockingError;
 impl ResponseError for crate::error::BlockingError {}
 
 /// Errors which can occur when attempting to generate resource uri.
-#[derive(Debug, PartialEq, Eq, Display, Error, From)]
+#[derive(Debug, PartialEq, Display, Error, From)]
 #[non_exhaustive]
 pub enum UrlGenerationError {
     /// Resource not found.

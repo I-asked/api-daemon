@@ -21,7 +21,7 @@ use crate::{Error, HttpRequest, HttpResponse};
 /// - `HttpResponse` and `HttpResponseBuilder`
 /// - `Option<R>` where `R: Responder`
 /// - `Result<R, E>` where `R: Responder` and [`E: ResponseError`](crate::ResponseError)
-/// - `(R, StatusCode)` where `R: Responder`
+/// - `(R, StatusCode) where `R: Responder`
 /// - `&'static str`, `String`, `&'_ String`, `Cow<'_, str>`, [`ByteString`](bytestring::ByteString)
 /// - `&'static [u8]`, `Vec<u8>`, `Bytes`, `BytesMut`
 /// - [`Json<T>`](crate::web::Json) and [`Form<T>`](crate::web::Form) where `T: Serialize`
@@ -186,9 +186,10 @@ impl_into_string_responder!(Cow<'_, str>);
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use actix_http::body::to_bytes;
     use actix_service::Service;
     use bytes::{Bytes, BytesMut};
+
+    use actix_http::body::to_bytes;
 
     use super::*;
     use crate::{

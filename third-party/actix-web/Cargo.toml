@@ -10,50 +10,20 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
-rust-version = "1.68"
+edition = "2018"
 name = "actix-web"
-version = "4.5.1"
-authors = [
-    "Nikolay Kim <fafhrd91@gmail.com>",
-    "Rob Ede <robjtede@icloud.com>",
-]
+version = "4.0.0"
+authors = ["Nikolay Kim <fafhrd91@gmail.com>", "Rob Ede <robjtede@icloud.com>"]
 description = "Actix Web is a powerful, pragmatic, and extremely fast web framework for Rust"
 homepage = "https://actix.rs"
-readme = "README.md"
-keywords = [
-    "actix",
-    "http",
-    "web",
-    "framework",
-    "async",
-]
-categories = [
-    "network-programming",
-    "asynchronous",
-    "web-programming::http-server",
-    "web-programming::websocket",
-]
+keywords = ["actix", "http", "web", "framework", "async"]
+categories = ["network-programming", "asynchronous", "web-programming::http-server", "web-programming::websocket"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/actix/actix-web"
-
+repository = "https://github.com/actix/actix-web.git"
+resolver = "2"
 [package.metadata.docs.rs]
-features = [
-    "macros",
-    "openssl",
-    "rustls-0_20",
-    "rustls-0_21",
-    "rustls-0_22",
-    "compress-brotli",
-    "compress-gzip",
-    "compress-zstd",
-    "cookies",
-    "secure-cookies",
-]
-rustdoc-args = [
-    "--cfg",
-    "docsrs",
-]
+features = ["macros", "openssl", "rustls", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "secure-cookies"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
 name = "actix_web"
@@ -73,20 +43,11 @@ required-features = []
 
 [[test]]
 name = "test_server"
-required-features = [
-    "compress-brotli",
-    "compress-gzip",
-    "compress-zstd",
-    "cookies",
-]
+required-features = ["compress-brotli", "compress-gzip", "compress-zstd", "cookies"]
 
 [[test]]
 name = "compression"
-required-features = [
-    "compress-brotli",
-    "compress-gzip",
-    "compress-zstd",
-]
+required-features = ["compress-brotli", "compress-gzip", "compress-zstd"]
 
 [[bench]]
 name = "server"
@@ -99,20 +60,19 @@ harness = false
 [[bench]]
 name = "responder"
 harness = false
-
 [dependencies.actix-codec]
 version = "0.5"
 
 [dependencies.actix-http]
-version = "3.6"
-features = ["ws"]
+version = "3.0.0"
+features = ["http2", "ws"]
 
 [dependencies.actix-macros]
 version = "0.2.3"
 optional = true
 
 [dependencies.actix-router]
-version = "0.5"
+version = "0.5.0"
 
 [dependencies.actix-rt]
 version = "2.6"
@@ -125,7 +85,7 @@ version = "2"
 version = "2"
 
 [dependencies.actix-tls]
-version = "3.3"
+version = "3"
 optional = true
 default-features = false
 
@@ -133,11 +93,11 @@ default-features = false
 version = "3"
 
 [dependencies.actix-web-codegen]
-version = "4.2"
+version = "4.0.0"
 optional = true
 
 [dependencies.ahash]
-version = "0.8"
+version = "0.7"
 
 [dependencies.bytes]
 version = "1"
@@ -154,17 +114,17 @@ features = ["percent-encode"]
 optional = true
 
 [dependencies.derive_more]
-version = "0.99.8"
+version = "0.99.5"
 
 [dependencies.encoding_rs]
 version = "0.8"
 
 [dependencies.futures-core]
-version = "0.3.17"
+version = "0.3.7"
 default-features = false
 
 [dependencies.futures-util]
-version = "0.3.17"
+version = "0.3.7"
 default-features = false
 
 [dependencies.itoa]
@@ -186,7 +146,7 @@ version = "1.5"
 version = "0.2.7"
 
 [dependencies.regex]
-version = "1.5.5"
+version = "1.4"
 
 [dependencies.serde]
 version = "1.0"
@@ -201,7 +161,7 @@ version = "0.7"
 version = "1.6.1"
 
 [dependencies.socket2]
-version = "0.5"
+version = "0.4.0"
 
 [dependencies.time]
 version = "0.3"
@@ -213,59 +173,13 @@ version = "2.1"
 
 [features]
 __compress = []
-compress-brotli = [
-    "actix-http/compress-brotli",
-    "__compress",
-]
-compress-gzip = [
-    "actix-http/compress-gzip",
-    "__compress",
-]
-compress-zstd = [
-    "actix-http/compress-zstd",
-    "__compress",
-]
+compress-brotli = ["actix-http/compress-brotli", "__compress"]
+compress-gzip = ["actix-http/compress-gzip", "__compress"]
+compress-zstd = ["actix-http/compress-zstd", "__compress"]
 cookies = ["cookie"]
-default = [
-    "macros",
-    "compress-brotli",
-    "compress-gzip",
-    "compress-zstd",
-    "cookies",
-    "http2",
-]
+default = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies"]
 experimental-io-uring = ["actix-server/io-uring"]
-http2 = ["actix-http/http2"]
-macros = [
-    "actix-macros",
-    "actix-web-codegen",
-]
-openssl = [
-    "http2",
-    "actix-http/openssl",
-    "actix-tls/accept",
-    "actix-tls/openssl",
-]
-rustls = ["rustls-0_20"]
-rustls-0_20 = [
-    "http2",
-    "actix-http/rustls-0_20",
-    "actix-tls/accept",
-    "actix-tls/rustls-0_20",
-]
-rustls-0_21 = [
-    "http2",
-    "actix-http/rustls-0_21",
-    "actix-tls/accept",
-    "actix-tls/rustls-0_21",
-]
-rustls-0_22 = [
-    "http2",
-    "actix-http/rustls-0_22",
-    "actix-tls/accept",
-    "actix-tls/rustls-0_22",
-]
-secure-cookies = [
-    "cookies",
-    "cookie/secure",
-]
+macros = ["actix-macros", "actix-web-codegen"]
+openssl = ["actix-http/openssl", "actix-tls/accept", "actix-tls/openssl"]
+rustls = ["actix-http/rustls", "actix-tls/accept", "actix-tls/rustls"]
+secure-cookies = ["cookies", "cookie/secure"]

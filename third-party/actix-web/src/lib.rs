@@ -4,19 +4,18 @@
 //! ```no_run
 //! use actix_web::{get, web, App, HttpServer, Responder};
 //!
-//! #[get("/hello/{name}")]
-//! async fn greet(name: web::Path<String>) -> impl Responder {
-//!     format!("Hello {}!", name)
+//! #[get("/{id}/{name}/index.html")]
+//! async fn index(path: web::Path<(u32, String)>) -> impl Responder {
+//!     let (id, name) = path.into_inner();
+//!     format!("Hello {}! id:{}", name, id)
 //! }
 //!
-//! #[actix_web::main] // or #[tokio::main]
+//! #[actix_web::main]
 //! async fn main() -> std::io::Result<()> {
-//!     HttpServer::new(|| {
-//!         App::new().service(greet)
-//!     })
-//!     .bind(("127.0.0.1", 8080))?
-//!     .run()
-//!     .await
+//!     HttpServer::new(|| App::new().service(index))
+//!         .bind("127.0.0.1:8080")?
+//!         .run()
+//!         .await
 //! }
 //! ```
 //!
@@ -71,12 +70,7 @@
 #![warn(future_incompatible)]
 #![doc(html_logo_url = "https://actix.rs/img/logo.png")]
 #![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
-
-pub use actix_http::{body, HttpMessage};
-#[cfg(feature = "cookies")]
-#[doc(inline)]
-pub use cookie;
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod app;
 mod app_service;
@@ -91,7 +85,6 @@ mod helpers;
 pub mod http;
 mod info;
 pub mod middleware;
-mod redirect;
 mod request;
 mod request_data;
 mod resource;
@@ -106,25 +99,31 @@ pub mod test;
 pub(crate) mod types;
 pub mod web;
 
+pub use crate::app::App;
 #[doc(inline)]
 pub use crate::error::Result;
-pub use crate::{
-    app::App,
-    error::{Error, ResponseError},
-    extract::FromRequest,
-    handler::Handler,
-    request::HttpRequest,
-    resource::Resource,
-    response::{CustomizeResponder, HttpResponse, HttpResponseBuilder, Responder},
-    route::Route,
-    scope::Scope,
-    server::HttpServer,
-    types::Either,
-};
+pub use crate::error::{Error, ResponseError};
+pub use crate::extract::FromRequest;
+pub use crate::handler::Handler;
+pub use crate::request::HttpRequest;
+pub use crate::resource::Resource;
+pub use crate::response::{CustomizeResponder, HttpResponse, HttpResponseBuilder, Responder};
+pub use crate::route::Route;
+pub use crate::scope::Scope;
+pub use crate::server::HttpServer;
+pub use crate::types::Either;
+
+pub use actix_http::{body, HttpMessage};
+
+#[cfg(feature = "cookies")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
+#[doc(inline)]
+pub use cookie;
 
 macro_rules! codegen_reexport {
     ($name:ident) => {
         #[cfg(feature = "macros")]
+        #[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
         pub use actix_web_codegen::$name;
     };
 }
@@ -132,7 +131,6 @@ macro_rules! codegen_reexport {
 codegen_reexport!(main);
 codegen_reexport!(test);
 codegen_reexport!(route);
-codegen_reexport!(routes);
 codegen_reexport!(head);
 codegen_reexport!(get);
 codegen_reexport!(post);

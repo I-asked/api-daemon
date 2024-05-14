@@ -8,6 +8,7 @@ use actix_http::{
     header::HeaderMap,
     Extensions, Response, ResponseHead, StatusCode,
 };
+
 #[cfg(feature = "cookies")]
 use {
     actix_http::{
@@ -342,7 +343,7 @@ mod response_fut_impl {
 
     // Future is only implemented for BoxBody payload type because it's the most useful for making
     // simple handlers without async blocks. Making it generic over all MessageBody types requires a
-    // future impl on Response which would cause its body field to be, undesirably, Option<B>.
+    // future impl on Response which would cause it's body field to be, undesirably, Option<B>.
     //
     // This impl is not particularly efficient due to the Response construction and should probably
     // not be invoked if performance is important. Prefer an async fn/block in such cases.

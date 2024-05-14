@@ -1,32 +1,33 @@
-use std::{net::SocketAddr, rc::Rc};
+use std::net::SocketAddr;
+use std::rc::Rc;
 
-use actix_service::{boxed, IntoServiceFactory, ServiceFactory, ServiceFactoryExt as _};
+use actix_http::Extensions;
+use actix_router::ResourceDef;
+use actix_service::{boxed, IntoServiceFactory, ServiceFactory};
 
-use crate::{
-    data::Data,
-    dev::{Extensions, ResourceDef},
-    error::Error,
-    guard::Guard,
-    resource::Resource,
-    rmap::ResourceMap,
-    route::Route,
-    service::{
-        AppServiceFactory, BoxedHttpServiceFactory, HttpServiceFactory, ServiceFactoryWrapper,
-        ServiceRequest, ServiceResponse,
-    },
+use crate::data::Data;
+use crate::error::Error;
+use crate::guard::Guard;
+use crate::resource::Resource;
+use crate::rmap::ResourceMap;
+use crate::route::Route;
+use crate::service::{
+    AppServiceFactory, HttpServiceFactory, ServiceFactoryWrapper, ServiceRequest,
+    ServiceResponse,
 };
 
 type Guards = Vec<Box<dyn Guard>>;
+type HttpNewService = boxed::BoxServiceFactory<(), ServiceRequest, ServiceResponse, Error, ()>;
 
 /// Application configuration
 pub struct AppService {
     config: AppConfig,
     root: bool,
-    default: Rc<BoxedHttpServiceFactory>,
+    default: Rc<HttpNewService>,
     #[allow(clippy::type_complexity)]
     services: Vec<(
         ResourceDef,
-        BoxedHttpServiceFactory,
+        HttpNewService,
         Option<Guards>,
         Option<Rc<ResourceMap>>,
     )>,
@@ -34,7 +35,7 @@ pub struct AppService {
 
 impl AppService {
     /// Crate server settings instance.
-    pub(crate) fn new(config: AppConfig, default: Rc<BoxedHttpServiceFactory>) -> Self {
+    pub(crate) fn new(config: AppConfig, default: Rc<HttpNewService>) -> Self {
         AppService {
             config,
             default,
@@ -55,7 +56,7 @@ impl AppService {
         AppConfig,
         Vec<(
             ResourceDef,
-            BoxedHttpServiceFactory,
+            HttpNewService,
             Option<Guards>,
             Option<Rc<ResourceMap>>,
         )>,
@@ -80,7 +81,7 @@ impl AppService {
     }
 
     /// Returns default handler factory.
-    pub fn default_service(&self) -> Rc<BoxedHttpServiceFactory> {
+    pub fn default_service(&self) -> Rc<HttpNewService> {
         self.default.clone()
     }
 
@@ -141,7 +142,7 @@ impl AppConfig {
         self.secure
     }
 
-    /// Returns the socket address of the local half of this TCP connection.
+    /// Returns the socket address of the local half of this TCP connection
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
     }
@@ -153,16 +154,6 @@ impl AppConfig {
 }
 
 impl Default for AppConfig {
-    /// Returns the default AppConfig.
-    /// Note: The included socket address is "127.0.0.1".
-    ///
-    /// 127.0.0.1: non-routable meta address that denotes an unknown, invalid or non-applicable target.
-    /// If you need a service only accessed by itself, use a loopback address.
-    /// A loopback address for IPv4 is any loopback address that begins with "127".
-    /// Loopback addresses should be only used to test your application locally.
-    /// The default configuration provides a loopback address.
-    ///
-    /// 0.0.0.0: if configured to use this special address, the application will listen to any IP address configured on the machine.
     fn default() -> Self {
         AppConfig::new(
             false,
@@ -196,7 +187,6 @@ pub struct ServiceConfig {
     pub(crate) services: Vec<Box<dyn AppServiceFactory>>,
     pub(crate) external: Vec<ResourceDef>,
     pub(crate) app_data: Extensions,
-    pub(crate) default: Option<Rc<BoxedHttpServiceFactory>>,
 }
 
 impl ServiceConfig {
@@ -205,7 +195,6 @@ impl ServiceConfig {
             services: Vec::new(),
             external: Vec::new(),
             app_data: Extensions::new(),
-            default: None,
         }
     }
 
@@ -223,25 +212,6 @@ impl ServiceConfig {
     /// Counterpart to [`App::app_data()`](crate::App::app_data).
     pub fn app_data<U: 'static>(&mut self, ext: U) -> &mut Self {
         self.app_data.insert(ext);
-        self
-    }
-
-    /// Default service to be used if no matching resource could be found.
-    ///
-    /// Counterpart to [`App::default_service()`](crate::App::default_service).
-    pub fn default_service<F, U>(&mut self, f: F) -> &mut Self
-    where
-        F: IntoServiceFactory<U, ServiceRequest>,
-        U: ServiceFactory<ServiceRequest, Config = (), Response = ServiceResponse, Error = Error>
-            + 'static,
-        U::InitError: std::fmt::Debug,
-    {
-        let svc = f
-            .into_factory()
-            .map_init_err(|err| log::error!("Can not construct default service: {:?}", err));
-
-        self.default = Some(Rc::new(boxed::factory(svc)));
-
         self
     }
 
@@ -304,11 +274,9 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::{
-        http::{Method, StatusCode},
-        test::{assert_body_eq, call_service, init_service, read_body, TestRequest},
-        web, App, HttpRequest, HttpResponse,
-    };
+    use crate::http::{Method, StatusCode};
+    use crate::test::{assert_body_eq, call_service, init_service, read_body, TestRequest};
+    use crate::{web, App, HttpRequest, HttpResponse};
 
     // allow deprecated `ServiceConfig::data`
     #[allow(deprecated)]
@@ -342,7 +310,7 @@ mod tests {
                     "/test",
                     web::get().to(|req: HttpRequest| {
                         HttpResponse::Ok()
-                            .body(req.url_for("youtube", ["12345"]).unwrap().to_string())
+                            .body(req.url_for("youtube", &["12345"]).unwrap().to_string())
                     }),
                 ),
         )
@@ -352,38 +320,6 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = read_body(resp).await;
         assert_eq!(body, Bytes::from_static(b"https://youtube.com/watch/12345"));
-    }
-
-    #[actix_rt::test]
-    async fn registers_default_service() {
-        let srv = init_service(
-            App::new()
-                .configure(|cfg| {
-                    cfg.default_service(
-                        web::get().to(|| HttpResponse::NotFound().body("four oh four")),
-                    );
-                })
-                .service(web::scope("/scoped").configure(|cfg| {
-                    cfg.default_service(
-                        web::get().to(|| HttpResponse::NotFound().body("scoped four oh four")),
-                    );
-                })),
-        )
-        .await;
-
-        // app registers default service
-        let req = TestRequest::with_uri("/path/i/did/not-configure").to_request();
-        let resp = call_service(&srv, req).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let body = read_body(resp).await;
-        assert_eq!(body, Bytes::from_static(b"four oh four"));
-
-        // scope registers default service
-        let req = TestRequest::with_uri("/scoped/path/i/did/not-configure").to_request();
-        let resp = call_service(&srv, req).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let body = read_body(resp).await;
-        assert_eq!(body, Bytes::from_static(b"scoped four oh four"));
     }
 
     #[actix_rt::test]

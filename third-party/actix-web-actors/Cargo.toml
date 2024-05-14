@@ -10,39 +10,32 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
+edition = "2018"
 name = "actix-web-actors"
-version = "4.3.0"
+version = "4.0.0"
 authors = ["Nikolay Kim <fafhrd91@gmail.com>"]
 description = "Actix actors support for Actix Web"
 homepage = "https://actix.rs"
-readme = "README.md"
-keywords = [
-    "actix",
-    "http",
-    "web",
-    "framework",
-    "async",
-]
+keywords = ["actix", "http", "web", "framework", "async"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/actix/actix-web"
+resolver = "2"
 
 [lib]
 name = "actix_web_actors"
 path = "src/lib.rs"
-
 [dependencies.actix]
-version = ">=0.12, <0.14"
+version = "0.12.0"
 default-features = false
 
 [dependencies.actix-codec]
 version = "0.5"
 
 [dependencies.actix-http]
-version = "3"
+version = "3.0.0"
 
 [dependencies.actix-web]
-version = "4"
+version = "4.0.0"
 default-features = false
 
 [dependencies.bytes]
@@ -52,16 +45,12 @@ version = "1"
 version = "1"
 
 [dependencies.futures-core]
-version = "0.3.17"
+version = "0.3.7"
 default-features = false
 
 [dependencies.pin-project-lite]
 version = "0.2"
 
 [dependencies.tokio]
-version = "1.24.2"
+version = "1.8.4"
 features = ["sync"]
-
-[dependencies.tokio-util]
-version = "0.7"
-features = ["codec"]

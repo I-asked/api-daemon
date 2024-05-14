@@ -5,7 +5,7 @@ use actix_service::{
     apply, apply_fn_factory, boxed, IntoServiceFactory, ServiceFactory, ServiceFactoryExt,
     Transform,
 };
-use futures_util::FutureExt as _;
+use futures_util::future::FutureExt as _;
 
 use crate::{
     app_service::{AppEntry, AppInit, AppRoutingFactory},
@@ -60,7 +60,7 @@ where
     /// [`HttpRequest::app_data`](crate::HttpRequest::app_data) method at runtime.
     ///
     /// # [`Data<T>`]
-    /// Any [`Data<T>`] type added here can utilize its extractor implementation in handlers.
+    /// Any [`Data<T>`] type added here can utilize it's extractor implementation in handlers.
     /// Types not wrapped in `Data<T>` cannot use this extractor. See [its docs](Data<T>) for more
     /// about its usage and patterns.
     ///
@@ -129,8 +129,6 @@ where
     ///
     /// Data items are constructed during application initialization, before the server starts
     /// accepting requests.
-    ///
-    /// The returned data value `D` is wrapped as [`Data<D>`].
     pub fn data_factory<F, Out, D, E>(mut self, data: F) -> Self
     where
         F: Fn() -> Out + 'static,
@@ -143,8 +141,8 @@ where
                 let fut = data();
                 async move {
                     match fut.await {
-                        Err(err) => {
-                            log::error!("Can not construct data instance: {err:?}");
+                        Err(e) => {
+                            log::error!("Can not construct data instance: {:?}", e);
                             Err(())
                         }
                         Ok(data) => {
@@ -187,17 +185,10 @@ where
         F: FnOnce(&mut ServiceConfig),
     {
         let mut cfg = ServiceConfig::new();
-
         f(&mut cfg);
-
         self.services.extend(cfg.services);
         self.external.extend(cfg.external);
         self.extensions.extend(cfg.app_data);
-
-        if let Some(default) = cfg.default {
-            self.default = Some(default);
-        }
-
         self
     }
 
@@ -266,12 +257,17 @@ where
     pub fn default_service<F, U>(mut self, svc: F) -> Self
     where
         F: IntoServiceFactory<U, ServiceRequest>,
-        U: ServiceFactory<ServiceRequest, Config = (), Response = ServiceResponse, Error = Error>
-            + 'static,
+        U: ServiceFactory<
+                ServiceRequest,
+                Config = (),
+                Response = ServiceResponse,
+                Error = Error,
+            > + 'static,
         U::InitError: fmt::Debug,
     {
         let svc = svc
             .into_factory()
+            .map(|res| res.map_into_boxed_body())
             .map_init_err(|e| log::error!("Can not construct default service: {:?}", e));
 
         self.default = Some(Rc::new(boxed::factory(svc)));
@@ -312,7 +308,7 @@ where
 
     /// Registers an app-wide middleware.
     ///
-    /// Registers middleware, in the form of a middleware component (type), that runs during
+    /// Registers middleware, in the form of a middleware compo nen t (type), that runs during
     /// inbound and/or outbound processing in the request life-cycle (request -> response),
     /// modifying request/response as necessary, across all requests managed by the `App`.
     ///
@@ -321,7 +317,16 @@ where
     /// Middleware can be applied similarly to individual `Scope`s and `Resource`s.
     /// See [`Scope::wrap`](crate::Scope::wrap) and [`Resource::wrap`].
     ///
-    /// For more info on middleware take a look at the [`middleware` module][crate::middleware].
+    /// # Middleware Order
+    /// Notice that the keyword for registering middleware is `wrap`. As you register middleware
+    /// using `wrap` in the App builder, imagine wrapping layers around an inner App. The first
+    /// middleware layer exposed to a Request is the outermost layer (i.e., the *last* registered in
+    /// the builder chain). Consequently, the *first* middleware registered in the builder chain is
+    /// the *last* to start executing during request processing.
+    ///
+    /// Ordering is less obvious when wrapped services also have middleware applied. In this case,
+    /// middlewares are run in reverse order for `App` _and then_ in reverse order for the
+    /// wrapped service.
     ///
     /// # Examples
     /// ```
@@ -671,7 +676,7 @@ mod tests {
                     "/test",
                     web::get().to(|req: HttpRequest| {
                         HttpResponse::Ok()
-                            .body(req.url_for("youtube", ["12345"]).unwrap().to_string())
+                            .body(req.url_for("youtube", &["12345"]).unwrap().to_string())
                     }),
                 ),
         )
@@ -701,7 +706,6 @@ mod tests {
                 .route("/", web::to(|| async { "hello" }))
         }
 
-        #[allow(clippy::let_underscore_future)]
         let _ = init_service(my_app());
     }
 }

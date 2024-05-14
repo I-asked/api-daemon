@@ -1,6 +1,6 @@
 #[cfg(feature = "openssl")]
 extern crate tls_openssl as openssl;
-#[cfg(feature = "rustls-0_21")]
+#[cfg(feature = "rustls")]
 extern crate tls_rustls as rustls;
 
 use std::{
@@ -19,13 +19,14 @@ use actix_web::{
 };
 use bytes::Bytes;
 use futures_core::ready;
+use rand::{distributions::Alphanumeric, Rng as _};
+
 #[cfg(feature = "openssl")]
 use openssl::{
     pkey::PKey,
     ssl::{SslAcceptor, SslMethod},
     x509::X509,
 };
-use rand::{distributions::Alphanumeric, Rng as _};
 
 mod utils;
 
@@ -93,8 +94,9 @@ impl futures_core::stream::Stream for TestBody {
 #[actix_rt::test]
 async fn test_body() {
     let srv = actix_test::start(|| {
-        App::new()
-            .service(web::resource("/").route(web::to(|| async { HttpResponse::Ok().body(STR) })))
+        App::new().service(
+            web::resource("/").route(web::to(|| async { HttpResponse::Ok().body(STR) })),
+        )
     });
 
     let mut res = srv.get("/").send().await.unwrap();
@@ -224,7 +226,8 @@ async fn test_body_chunked_implicit() {
         App::new()
             .wrap(Compress::default())
             .service(web::resource("/").route(web::get().to(|| async {
-                HttpResponse::Ok().streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
+                HttpResponse::Ok()
+                    .streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
             })))
     });
 
@@ -253,7 +256,8 @@ async fn test_body_br_streaming() {
         App::new()
             .wrap(Compress::default())
             .service(web::resource("/").route(web::to(|| async {
-                HttpResponse::Ok().streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
+                HttpResponse::Ok()
+                    .streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
             })))
     });
 
@@ -388,7 +392,8 @@ async fn test_body_zstd_streaming() {
         App::new()
             .wrap(Compress::default())
             .service(web::resource("/").route(web::to(move || async {
-                HttpResponse::Ok().streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
+                HttpResponse::Ok()
+                    .streaming(TestBody::new(Bytes::from_static(STR.as_ref()), 24))
             })))
     });
 
@@ -681,14 +686,15 @@ async fn test_brotli_encoding_large_openssl() {
     use actix_web::http::header;
 
     let data = STR.repeat(10);
-    let srv = actix_test::start_with(actix_test::config().openssl(openssl_config()), move || {
-        App::new().service(web::resource("/").route(web::to(|bytes: Bytes| async {
-            // echo decompressed request body back in response
-            HttpResponse::Ok()
-                .insert_header(header::ContentEncoding::Identity)
-                .body(bytes)
-        })))
-    });
+    let srv =
+        actix_test::start_with(actix_test::config().openssl(openssl_config()), move || {
+            App::new().service(web::resource("/").route(web::to(|bytes: Bytes| async {
+                // echo decompressed request body back in response
+                HttpResponse::Ok()
+                    .insert_header(header::ContentEncoding::Identity)
+                    .body(bytes)
+            })))
+        });
 
     let mut res = srv
         .post("/")
@@ -704,7 +710,7 @@ async fn test_brotli_encoding_large_openssl() {
     srv.stop().await;
 }
 
-#[cfg(feature = "rustls-0_21")]
+#[cfg(feature = "rustls")]
 mod plus_rustls {
     use std::io::BufReader;
 
@@ -743,7 +749,7 @@ mod plus_rustls {
             .map(char::from)
             .collect::<String>();
 
-        let srv = actix_test::start_with(actix_test::config().rustls_0_21(tls_config()), || {
+        let srv = actix_test::start_with(actix_test::config().rustls(tls_config()), || {
             App::new().service(web::resource("/").route(web::to(|bytes: Bytes| async {
                 // echo decompressed request body back in response
                 HttpResponse::Ok()
@@ -793,36 +799,34 @@ async fn test_server_cookies() {
     let res = req.send().await.unwrap();
     assert!(res.status().is_success());
 
-    {
-        let first_cookie = Cookie::build("first", "first_value")
-            .http_only(true)
-            .finish();
-        let second_cookie = Cookie::new("second", "first_value");
+    let first_cookie = Cookie::build("first", "first_value")
+        .http_only(true)
+        .finish();
+    let second_cookie = Cookie::new("second", "first_value");
 
-        let cookies = res.cookies().expect("To have cookies");
-        assert_eq!(cookies.len(), 3);
-        if cookies[0] == first_cookie {
-            assert_eq!(cookies[1], second_cookie);
-        } else {
-            assert_eq!(cookies[0], second_cookie);
-            assert_eq!(cookies[1], first_cookie);
-        }
+    let cookies = res.cookies().expect("To have cookies");
+    assert_eq!(cookies.len(), 3);
+    if cookies[0] == first_cookie {
+        assert_eq!(cookies[1], second_cookie);
+    } else {
+        assert_eq!(cookies[0], second_cookie);
+        assert_eq!(cookies[1], first_cookie);
+    }
 
-        let first_cookie = first_cookie.to_string();
-        let second_cookie = second_cookie.to_string();
-        // Check that we have exactly two instances of raw cookie headers
-        let cookies = res
-            .headers()
-            .get_all(http::header::SET_COOKIE)
-            .map(|header| header.to_str().expect("To str").to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(cookies.len(), 3);
-        if cookies[0] == first_cookie {
-            assert_eq!(cookies[1], second_cookie);
-        } else {
-            assert_eq!(cookies[0], second_cookie);
-            assert_eq!(cookies[1], first_cookie);
-        }
+    let first_cookie = first_cookie.to_string();
+    let second_cookie = second_cookie.to_string();
+    // Check that we have exactly two instances of raw cookie headers
+    let cookies = res
+        .headers()
+        .get_all(http::header::SET_COOKIE)
+        .map(|header| header.to_str().expect("To str").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(cookies.len(), 3);
+    if cookies[0] == first_cookie {
+        assert_eq!(cookies[1], second_cookie);
+    } else {
+        assert_eq!(cookies[0], second_cookie);
+        assert_eq!(cookies[1], first_cookie);
     }
 
     srv.stop().await;

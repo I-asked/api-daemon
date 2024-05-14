@@ -5,20 +5,16 @@
   </p>
   <p>
 
-<!-- prettier-ignore-start -->
-
 [![crates.io](https://img.shields.io/crates/v/actix-web?label=latest)](https://crates.io/crates/actix-web)
-[![Documentation](https://docs.rs/actix-web/badge.svg?version=4.5.1)](https://docs.rs/actix-web/4.5.1)
-![MSRV](https://img.shields.io/badge/rustc-1.68+-ab6000.svg)
+[![Documentation](https://docs.rs/actix-web/badge.svg?version=4.0.0)](https://docs.rs/actix-web/4.0.0)
+![MSRV](https://img.shields.io/badge/rustc-1.54+-ab6000.svg)
 ![MIT or Apache 2.0 licensed](https://img.shields.io/crates/l/actix-web.svg)
-[![Dependency Status](https://deps.rs/crate/actix-web/4.5.1/status.svg)](https://deps.rs/crate/actix-web/4.5.1)
+[![Dependency Status](https://deps.rs/crate/actix-web/4.0.0/status.svg)](https://deps.rs/crate/actix-web/4.0.0)
 <br />
 [![CI](https://github.com/actix/actix-web/actions/workflows/ci.yml/badge.svg)](https://github.com/actix/actix-web/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/actix/actix-web/branch/master/graph/badge.svg)](https://codecov.io/gh/actix/actix-web)
 ![downloads](https://img.shields.io/crates/d/actix-web.svg)
 [![Chat on Discord](https://img.shields.io/discord/771444961383153695?label=chat&logo=discord)](https://discord.gg/NWpN5mmg3x)
-
-<!-- prettier-ignore-end -->
 
   </p>
 </div>
@@ -37,7 +33,7 @@
 - SSL support using OpenSSL or Rustls
 - Middlewares ([Logger, Session, CORS, etc](https://actix.rs/docs/middleware/))
 - Integrates with the [`awc` HTTP client](https://docs.rs/awc/)
-- Runs on stable Rust 1.68+
+- Runs on stable Rust 1.54+
 
 ## Documentation
 
@@ -52,7 +48,7 @@ Dependencies:
 
 ```toml
 [dependencies]
-actix-web = "4"
+actix-web = "4.0.0-rc.1"
 ```
 
 Code:
@@ -60,19 +56,18 @@ Code:
 ```rust
 use actix_web::{get, web, App, HttpServer, Responder};
 
-#[get("/hello/{name}")]
-async fn greet(name: web::Path<String>) -> impl Responder {
-    format!("Hello {name}!")
+#[get("/{id}/{name}/index.html")]
+async fn index(params: web::Path<(u32, String)>) -> impl Responder {
+    let (id, name) = params.into_inner();
+    format!("Hello {}! id:{}", name, id)
 }
 
 #[actix_web::main] // or #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
-        App::new().service(greet)
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+    HttpServer::new(|| App::new().service(index))
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
 }
 ```
 
@@ -83,7 +78,6 @@ async fn main() -> std::io::Result<()> {
 - [Application State](https://github.com/actix/examples/tree/master/basics/state)
 - [JSON Handling](https://github.com/actix/examples/tree/master/json/json)
 - [Multipart Streams](https://github.com/actix/examples/tree/master/forms/multipart)
-- [MongoDB Integration](https://github.com/actix/examples/tree/master/databases/mongodb)
 - [Diesel Integration](https://github.com/actix/examples/tree/master/databases/diesel)
 - [SQLite Integration](https://github.com/actix/examples/tree/master/databases/sqlite)
 - [Postgres Integration](https://github.com/actix/examples/tree/master/databases/postgres)
@@ -98,7 +92,7 @@ You may consider checking out [this directory](https://github.com/actix/examples
 
 ## Benchmarks
 
-One of the fastest web frameworks available according to the [TechEmpower Framework Benchmark](https://www.techempower.com/benchmarks/#section=data-r21&test=composite).
+One of the fastest web frameworks available according to the [TechEmpower Framework Benchmark](https://www.techempower.com/benchmarks/#section=data-r20&test=composite).
 
 ## License
 

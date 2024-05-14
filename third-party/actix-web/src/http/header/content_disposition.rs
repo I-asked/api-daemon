@@ -10,10 +10,9 @@
 //! - Browser conformance tests at: <http://greenbytes.de/tech/tc2231/>
 //! - IANA assignment: <http://www.iana.org/assignments/cont-disp/cont-disp.xhtml>
 
-use std::fmt::{self, Write};
-
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::fmt::{self, Write};
 
 use super::{ExtendedValue, Header, TryIntoHeaderValue, Writer};
 use crate::http::header;
@@ -37,7 +36,7 @@ fn split_once_and_trim(haystack: &str, needle: char) -> (&str, &str) {
 }
 
 /// The implied disposition of the content of the HTTP body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DispositionType {
     /// Inline implies default processing.
     Inline,
@@ -79,7 +78,7 @@ impl<'a> From<&'a str> for DispositionType {
 /// assert!(param.is_filename());
 /// assert_eq!(param.as_filename().unwrap(), "sample.txt");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum DispositionParam {
     /// For [`DispositionType::FormData`] (i.e. *multipart/form-data*), the name of an field from
@@ -302,7 +301,7 @@ impl DispositionParam {
 /// change to match local file system conventions if applicable, and do not use directory path
 /// information that may be present.
 /// See [RFC 2183 §2.3](https://datatracker.ietf.org/doc/html/rfc2183#section-2.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContentDisposition {
     /// The disposition type
     pub disposition: DispositionType,
@@ -312,36 +311,16 @@ pub struct ContentDisposition {
 }
 
 impl ContentDisposition {
-    /// Constructs a Content-Disposition header suitable for downloads.
-    ///
-    /// # Examples
-    /// ```
-    /// use actix_web::http::header::{ContentDisposition, TryIntoHeaderValue as _};
-    ///
-    /// let cd = ContentDisposition::attachment("files.zip");
-    ///
-    /// let cd_val = cd.try_into_value().unwrap();
-    /// assert_eq!(cd_val, "attachment; filename=\"files.zip\"");
-    /// ```
-    pub fn attachment(filename: impl Into<String>) -> Self {
-        Self {
-            disposition: DispositionType::Attachment,
-            parameters: vec![DispositionParam::Filename(filename.into())],
-        }
-    }
-
     /// Parse a raw Content-Disposition header value.
     pub fn from_raw(hv: &header::HeaderValue) -> Result<Self, crate::error::ParseError> {
         // `header::from_one_raw_str` invokes `hv.to_str` which assumes `hv` contains only visible
         //  ASCII characters. So `hv.as_bytes` is necessary here.
         let hv = String::from_utf8(hv.as_bytes().to_vec())
             .map_err(|_| crate::error::ParseError::Header)?;
-
         let (disp_type, mut left) = split_once_and_trim(hv.as_str().trim(), ';');
         if disp_type.is_empty() {
             return Err(crate::error::ParseError::Header);
         }
-
         let mut cd = ContentDisposition {
             disposition: disp_type.into(),
             parameters: Vec::new(),
@@ -592,8 +571,9 @@ mod tests {
     fn test_from_raw_basic() {
         assert!(ContentDisposition::from_raw(&HeaderValue::from_static("")).is_err());
 
-        let a =
-            HeaderValue::from_static("form-data; dummy=3; name=upload; filename=\"sample.png\"");
+        let a = HeaderValue::from_static(
+            "form-data; dummy=3; name=upload; filename=\"sample.png\"",
+        );
         let a: ContentDisposition = ContentDisposition::from_raw(&a).unwrap();
         let b = ContentDisposition {
             disposition: DispositionType::FormData,
@@ -647,8 +627,8 @@ mod tests {
                 charset: Charset::Ext(String::from("UTF-8")),
                 language_tag: None,
                 value: vec![
-                    0xc2, 0xa3, 0x20, b'a', b'n', b'd', 0x20, 0xe2, 0x82, 0xac, 0x20, b'r', b'a',
-                    b't', b'e', b's',
+                    0xc2, 0xa3, 0x20, b'a', b'n', b'd', 0x20, 0xe2, 0x82, 0xac, 0x20, b'r',
+                    b'a', b't', b'e', b's',
                 ],
             })],
         };
@@ -664,8 +644,8 @@ mod tests {
                 charset: Charset::Ext(String::from("UTF-8")),
                 language_tag: None,
                 value: vec![
-                    0xc2, 0xa3, 0x20, b'a', b'n', b'd', 0x20, 0xe2, 0x82, 0xac, 0x20, b'r', b'a',
-                    b't', b'e', b's',
+                    0xc2, 0xa3, 0x20, b'a', b'n', b'd', 0x20, 0xe2, 0x82, 0xac, 0x20, b'r',
+                    b'a', b't', b'e', b's',
                 ],
             })],
         };
@@ -741,8 +721,8 @@ mod tests {
         };
         assert_eq!(a, b);
 
-        let a =
-            ContentDisposition::from_raw(&HeaderValue::from_static("unknown-disp-param")).unwrap();
+        let a = ContentDisposition::from_raw(&HeaderValue::from_static("unknown-disp-param"))
+            .unwrap();
         let b = ContentDisposition {
             disposition: DispositionType::Ext(String::from("unknown-disp-param")),
             parameters: vec![],
@@ -781,7 +761,8 @@ mod tests {
         Mainstream browsers like Firefox (gecko) and Chrome use UTF-8 directly as above.
         (And now, only UTF-8 is handled by this implementation.)
         */
-        let a = HeaderValue::from_str("form-data; name=upload; filename=\"文件.webp\"").unwrap();
+        let a =
+            HeaderValue::from_str("form-data; name=upload; filename=\"文件.webp\"").unwrap();
         let a: ContentDisposition = ContentDisposition::from_raw(&a).unwrap();
         let b = ContentDisposition {
             disposition: DispositionType::FormData,
@@ -801,7 +782,9 @@ mod tests {
             disposition: DispositionType::FormData,
             parameters: vec![
                 DispositionParam::Name(String::from("upload")),
-                DispositionParam::Filename(String::from("余固知謇謇之為患兮，忍而不能舍也.pptx")),
+                DispositionParam::Filename(String::from(
+                    "余固知謇謇之為患兮，忍而不能舍也.pptx",
+                )),
             ],
         };
         assert_eq!(a, b);
@@ -866,7 +849,8 @@ mod tests {
         };
         assert_eq!(a, b);
 
-        let a = HeaderValue::from_static("form-data; name=photo; filename=\"%74%65%73%74.png\"");
+        let a =
+            HeaderValue::from_static("form-data; name=photo; filename=\"%74%65%73%74.png\"");
         let a: ContentDisposition = ContentDisposition::from_raw(&a).unwrap();
         let b = ContentDisposition {
             disposition: DispositionType::FormData,

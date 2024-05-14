@@ -4,9 +4,8 @@
 use std::io::{Read as _, Write as _};
 
 pub mod gzip {
-    use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-
     use super::*;
+    use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
     pub fn encode(bytes: impl AsRef<[u8]>) -> Vec<u8> {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
@@ -23,9 +22,8 @@ pub mod gzip {
 }
 
 pub mod deflate {
-    use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
-
     use super::*;
+    use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 
     pub fn encode(bytes: impl AsRef<[u8]>) -> Vec<u8> {
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
@@ -42,9 +40,8 @@ pub mod deflate {
 }
 
 pub mod brotli {
-    use ::brotli::{reader::Decompressor as BrotliDecoder, CompressorWriter as BrotliEncoder};
-
     use super::*;
+    use ::brotli::{reader::Decompressor as BrotliDecoder, CompressorWriter as BrotliEncoder};
 
     pub fn encode(bytes: impl AsRef<[u8]>) -> Vec<u8> {
         let mut encoder = BrotliEncoder::new(
@@ -67,9 +64,8 @@ pub mod brotli {
 }
 
 pub mod zstd {
-    use ::zstd::stream::{read::Decoder, write::Encoder};
-
     use super::*;
+    use ::zstd::stream::{read::Decoder, write::Encoder};
 
     pub fn encode(bytes: impl AsRef<[u8]>) -> Vec<u8> {
         let mut encoder = Encoder::new(Vec::new(), 3).unwrap();
