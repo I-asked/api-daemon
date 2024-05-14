@@ -24,7 +24,7 @@ release_service_lib apps ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib audiovolumemanager ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib contacts ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib devicecapability ${RELEASE_ROOT} ${BUILD_TYPE}
-release_service_lib libsignal ${RELEASE_ROOT} ${BUILD_TYPE}
+#release_service_lib libsignal ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib powermanager ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib procmanager ${RELEASE_ROOT} ${BUILD_TYPE}
 release_service_lib settings ${RELEASE_ROOT} ${BUILD_TYPE}
