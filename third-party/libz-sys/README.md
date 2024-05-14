@@ -1,8 +1,12 @@
 # libz-sys
 
-A common library for linking `libz` to rust programs (also known as zlib).
+A common library for linking `libz` to Rust programs (also known as zlib).
 
 [Documentation](https://docs.rs/libz-sys)
+
+This also serves as the source for the `libz-ng-sys` crate, which builds
+zlib-ng natively (not in zlib-compat mode). See
+[`README-zng.md`](README-zng.md) for details.
 
 # High-level API
 
@@ -29,9 +33,11 @@ if any library crate in your dependency graph wants stock zlib, `libz-sys` will
 use stock zlib.
 
 Library crates depending on `libz-sys` should use:
+
+```toml
+libz-sys = { version = "1.1", default-features = false, features = ["libc"] }
 ```
-libz-sys = { version = "1.1.0", default-features = false, features = ["libc"] }
-```
+
 (Omit the `libc` feature if you don't require the corresponding functions.)
 
 This allows higher-level crates depending on your library to opt into zlib-ng
@@ -39,19 +45,32 @@ if desired.
 
 Building zlib-ng requires `cmake`.
 
+Crates that don't require compatibility with the zlib C API, and use zlib
+exclusively from Rust or support the zlib-ng native C API (prefixed with
+`zng_`) can use [`libz-ng-sys`](https://crates.io/crates/libz-ng-sys) instead,
+which allows zlib and zlib-ng to coexist in the same program. See
+[README-zng.md](README-zng.md) for details.
+
+# Minimum Supported Rust Version (MSRV) Policy
+
+This crate uses the same MSRV policy as the
+[`flate2`](https://crates.io/crates/flate2) crate: This crate supports the
+current and previous stable versions of Rust. Older versions of Rust may work,
+but we don't guarantee these will continue to work.
+
 # License
 
 This project is licensed under either of
 
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
+   https://www.apache.org/licenses/LICENSE-2.0)
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
+   https://opensource.org/license/mit/)
 
 at your option.
 
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in `libz-sys` by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+for inclusion in `libz-sys` by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.

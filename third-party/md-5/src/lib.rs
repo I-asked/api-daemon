@@ -26,22 +26,18 @@
 #![no_std]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/RustCrypto/media/6ee8e381/logo.svg",
-    html_favicon_url = "https://raw.githubusercontent.com/RustCrypto/media/6ee8e381/logo.svg",
-    html_root_url = "https://docs.rs/md-5/0.10.1"
+    html_favicon_url = "https://raw.githubusercontent.com/RustCrypto/media/6ee8e381/logo.svg"
 )]
 #![warn(missing_docs, rust_2018_idioms)]
 
-#[cfg(feature = "asm")]
-extern crate md5_asm as compress;
-
-#[cfg(not(feature = "asm"))]
-mod compress;
-
 pub use digest::{self, Digest};
 
-use compress::compress;
+mod compress;
+pub(crate) mod consts;
 
 use core::{fmt, slice::from_ref};
+#[cfg(feature = "oid")]
+use digest::const_oid::{AssociatedOid, ObjectIdentifier};
 use digest::{
     block_buffer::Eager,
     core_api::{
@@ -51,6 +47,7 @@ use digest::{
     typenum::{Unsigned, U16, U64},
     HashMarker, Output,
 };
+
 /// Core MD5 hasher state.
 #[derive(Clone)]
 pub struct Md5Core {
@@ -76,7 +73,7 @@ impl UpdateCore for Md5Core {
     #[inline]
     fn update_blocks(&mut self, blocks: &[Block<Self>]) {
         self.block_len = self.block_len.wrapping_add(blocks.len() as u64);
-        compress(&mut self.state, convert(blocks))
+        compress::compress(&mut self.state, convert(blocks))
     }
 }
 
@@ -89,7 +86,9 @@ impl FixedOutputCore for Md5Core {
             .wrapping_add(buffer.get_pos() as u64)
             .wrapping_mul(8);
         let mut s = self.state;
-        buffer.len64_padding_le(bit_len, |b| compress(&mut s, convert(from_ref(b))));
+        buffer.len64_padding_le(bit_len, |b| {
+            compress::compress(&mut s, convert(from_ref(b)))
+        });
         for (chunk, v) in out.chunks_exact_mut(4).zip(s.iter()) {
             chunk.copy_from_slice(&v.to_le_bytes());
         }
@@ -101,7 +100,7 @@ impl Default for Md5Core {
     fn default() -> Self {
         Self {
             block_len: 0,
-            state: [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476],
+            state: consts::STATE_INIT,
         }
     }
 }
@@ -123,6 +122,12 @@ impl fmt::Debug for Md5Core {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Md5Core { ... }")
     }
+}
+
+#[cfg(feature = "oid")]
+#[cfg_attr(docsrs, doc(cfg(feature = "oid")))]
+impl AssociatedOid for Md5Core {
+    const OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.2.5");
 }
 
 /// MD5 hasher state.

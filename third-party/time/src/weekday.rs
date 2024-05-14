@@ -1,8 +1,12 @@
 //! Days of the week.
 
-use core::fmt::{self, Display};
+use core::fmt;
+use core::str::FromStr;
 
-use Weekday::*;
+use powerfmt::smart_display::{FormatterOptions, Metadata, SmartDisplay};
+
+use self::Weekday::*;
+use crate::error;
 
 /// Days of the week.
 ///
@@ -10,19 +14,19 @@ use Weekday::*;
 /// Friday), this type does not implement `PartialOrd` or `Ord`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Weekday {
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Monday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Tuesday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Wednesday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Thursday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Friday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Saturday,
-    #[allow(clippy::missing_docs_in_private_items)]
+    #[allow(missing_docs)]
     Sunday,
 }
 
@@ -60,6 +64,50 @@ impl Weekday {
             Friday => Saturday,
             Saturday => Sunday,
             Sunday => Monday,
+        }
+    }
+
+    /// Get n-th next day.
+    ///
+    /// ```rust
+    /// # use time::Weekday;
+    /// assert_eq!(Weekday::Monday.nth_next(1), Weekday::Tuesday);
+    /// assert_eq!(Weekday::Sunday.nth_next(10), Weekday::Wednesday);
+    /// ```
+    pub const fn nth_next(self, n: u8) -> Self {
+        match (self.number_days_from_monday() + n % 7) % 7 {
+            0 => Monday,
+            1 => Tuesday,
+            2 => Wednesday,
+            3 => Thursday,
+            4 => Friday,
+            5 => Saturday,
+            val => {
+                debug_assert!(val == 6);
+                Sunday
+            }
+        }
+    }
+
+    /// Get n-th previous day.
+    ///
+    /// ```rust
+    /// # use time::Weekday;
+    /// assert_eq!(Weekday::Monday.nth_prev(1), Weekday::Sunday);
+    /// assert_eq!(Weekday::Sunday.nth_prev(10), Weekday::Thursday);
+    /// ```
+    pub const fn nth_prev(self, n: u8) -> Self {
+        match self.number_days_from_monday() as i8 - (n % 7) as i8 {
+            1 | -6 => Tuesday,
+            2 | -5 => Wednesday,
+            3 | -4 => Thursday,
+            4 | -3 => Friday,
+            5 | -2 => Saturday,
+            6 | -1 => Sunday,
+            val => {
+                debug_assert!(val == 0);
+                Monday
+            }
         }
     }
 
@@ -113,9 +161,30 @@ impl Weekday {
     }
 }
 
-impl Display for Weekday {
+mod private {
+    #[non_exhaustive]
+    #[derive(Debug, Clone, Copy)]
+    pub struct WeekdayMetadata;
+}
+use private::WeekdayMetadata;
+
+impl SmartDisplay for Weekday {
+    type Metadata = WeekdayMetadata;
+
+    fn metadata(&self, _: FormatterOptions) -> Metadata<'_, Self> {
+        match self {
+            Monday => Metadata::new(6, self, WeekdayMetadata),
+            Tuesday => Metadata::new(7, self, WeekdayMetadata),
+            Wednesday => Metadata::new(9, self, WeekdayMetadata),
+            Thursday => Metadata::new(8, self, WeekdayMetadata),
+            Friday => Metadata::new(6, self, WeekdayMetadata),
+            Saturday => Metadata::new(8, self, WeekdayMetadata),
+            Sunday => Metadata::new(6, self, WeekdayMetadata),
+        }
+    }
+
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
+        f.pad(match self {
             Monday => "Monday",
             Tuesday => "Tuesday",
             Wednesday => "Wednesday",
@@ -124,5 +193,28 @@ impl Display for Weekday {
             Saturday => "Saturday",
             Sunday => "Sunday",
         })
+    }
+}
+
+impl fmt::Display for Weekday {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        SmartDisplay::fmt(self, f)
+    }
+}
+
+impl FromStr for Weekday {
+    type Err = error::InvalidVariant;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Monday" => Ok(Monday),
+            "Tuesday" => Ok(Tuesday),
+            "Wednesday" => Ok(Wednesday),
+            "Thursday" => Ok(Thursday),
+            "Friday" => Ok(Friday),
+            "Saturday" => Ok(Saturday),
+            "Sunday" => Ok(Sunday),
+            _ => Err(error::InvalidVariant),
+        }
     }
 }

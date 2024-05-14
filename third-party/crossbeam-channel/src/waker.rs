@@ -2,11 +2,12 @@
 
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread::{self, ThreadId};
+use std::vec::Vec;
 
 use crate::context::Context;
 use crate::select::{Operation, Selected};
-use crate::utils::Spinlock;
 
 /// Represents a thread blocked on a specific channel operation.
 pub(crate) struct Entry {
@@ -77,26 +78,32 @@ impl Waker {
     /// Attempts to find another thread's entry, select the operation, and wake it up.
     #[inline]
     pub(crate) fn try_select(&mut self) -> Option<Entry> {
-        self.selectors
-            .iter()
-            .position(|selector| {
-                // Does the entry belong to a different thread?
-                selector.cx.thread_id() != current_thread_id()
-                    && selector // Try selecting this operation.
-                        .cx
-                        .try_select(Selected::Operation(selector.oper))
-                        .is_ok()
-                    && {
-                        // Provide the packet.
-                        selector.cx.store_packet(selector.packet);
-                        // Wake the thread up.
-                        selector.cx.unpark();
-                        true
-                    }
-            })
-            // Remove the entry from the queue to keep it clean and improve
-            // performance.
-            .map(|pos| self.selectors.remove(pos))
+        if self.selectors.is_empty() {
+            None
+        } else {
+            let thread_id = current_thread_id();
+
+            self.selectors
+                .iter()
+                .position(|selector| {
+                    // Does the entry belong to a different thread?
+                    selector.cx.thread_id() != thread_id
+                        && selector // Try selecting this operation.
+                            .cx
+                            .try_select(Selected::Operation(selector.oper))
+                            .is_ok()
+                        && {
+                            // Provide the packet.
+                            selector.cx.store_packet(selector.packet);
+                            // Wake the thread up.
+                            selector.cx.unpark();
+                            true
+                        }
+                })
+                // Remove the entry from the queue to keep it clean and improve
+                // performance.
+                .map(|pos| self.selectors.remove(pos))
+        }
     }
 
     /// Returns `true` if there is an entry which can be selected by the current thread.
@@ -170,7 +177,7 @@ impl Drop for Waker {
 /// This is a simple wrapper around `Waker` that internally uses a mutex for synchronization.
 pub(crate) struct SyncWaker {
     /// The inner `Waker`.
-    inner: Spinlock<Waker>,
+    inner: Mutex<Waker>,
 
     /// `true` if the waker is empty.
     is_empty: AtomicBool,
@@ -181,7 +188,7 @@ impl SyncWaker {
     #[inline]
     pub(crate) fn new() -> Self {
         SyncWaker {
-            inner: Spinlock::new(Waker::new()),
+            inner: Mutex::new(Waker::new()),
             is_empty: AtomicBool::new(true),
         }
     }
@@ -189,7 +196,7 @@ impl SyncWaker {
     /// Registers the current thread with an operation.
     #[inline]
     pub(crate) fn register(&self, oper: Operation, cx: &Context) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         inner.register(oper, cx);
         self.is_empty.store(
             inner.selectors.is_empty() && inner.observers.is_empty(),
@@ -200,7 +207,7 @@ impl SyncWaker {
     /// Unregisters an operation previously registered by the current thread.
     #[inline]
     pub(crate) fn unregister(&self, oper: Operation) -> Option<Entry> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         let entry = inner.unregister(oper);
         self.is_empty.store(
             inner.selectors.is_empty() && inner.observers.is_empty(),
@@ -213,7 +220,7 @@ impl SyncWaker {
     #[inline]
     pub(crate) fn notify(&self) {
         if !self.is_empty.load(Ordering::SeqCst) {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.lock().unwrap();
             if !self.is_empty.load(Ordering::SeqCst) {
                 inner.try_select();
                 inner.notify();
@@ -228,7 +235,7 @@ impl SyncWaker {
     /// Registers an operation waiting to be ready.
     #[inline]
     pub(crate) fn watch(&self, oper: Operation, cx: &Context) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         inner.watch(oper, cx);
         self.is_empty.store(
             inner.selectors.is_empty() && inner.observers.is_empty(),
@@ -239,7 +246,7 @@ impl SyncWaker {
     /// Unregisters an operation waiting to be ready.
     #[inline]
     pub(crate) fn unwatch(&self, oper: Operation) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         inner.unwatch(oper);
         self.is_empty.store(
             inner.selectors.is_empty() && inner.observers.is_empty(),
@@ -250,7 +257,7 @@ impl SyncWaker {
     /// Notifies all threads that the channel is disconnected.
     #[inline]
     pub(crate) fn disconnect(&self) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         inner.disconnect();
         self.is_empty.store(
             inner.selectors.is_empty() && inner.observers.is_empty(),
@@ -269,7 +276,7 @@ impl Drop for SyncWaker {
 /// Returns the id of the current thread.
 #[inline]
 fn current_thread_id() -> ThreadId {
-    thread_local! {
+    std::thread_local! {
         /// Cached thread-local id.
         static THREAD_ID: ThreadId = thread::current().id();
     }

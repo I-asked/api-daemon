@@ -175,6 +175,7 @@ pub struct MidHandshakeSslStream<S> {
 impl<S> MidHandshakeSslStream<S> {
     /// Returns a shared reference to the inner stream.
     #[inline(always)]
+    #[must_use]
     pub fn get_ref(&self) -> &S {
         self.stream.get_ref()
     }
@@ -187,6 +188,7 @@ impl<S> MidHandshakeSslStream<S> {
 
     /// Returns a shared reference to the `SslContext` of the stream.
     #[inline(always)]
+    #[must_use]
     pub fn context(&self) -> &SslContext {
         self.stream.context()
     }
@@ -200,6 +202,7 @@ impl<S> MidHandshakeSslStream<S> {
     /// Returns `true` iff `break_on_server_auth` was set and the handshake has
     /// progressed to that point.
     #[inline(always)]
+    #[must_use]
     pub fn server_auth_completed(&self) -> bool {
         self.error.code() == errSSLPeerAuthCompleted
     }
@@ -207,6 +210,7 @@ impl<S> MidHandshakeSslStream<S> {
     /// Returns `true` iff `break_on_cert_requested` was set and the handshake
     /// has progressed to that point.
     #[inline(always)]
+    #[must_use]
     pub fn client_cert_requested(&self) -> bool {
         self.error.code() == errSSLClientCertRequested
     }
@@ -214,12 +218,14 @@ impl<S> MidHandshakeSslStream<S> {
     /// Returns `true` iff the underlying stream returned an error with the
     /// `WouldBlock` kind.
     #[inline(always)]
+    #[must_use]
     pub fn would_block(&self) -> bool {
         self.error.code() == errSSLWouldBlock
     }
 
     /// Returns the error which caused the handshake interruption.
     #[inline(always)]
+    #[must_use]
     pub fn error(&self) -> &Error {
         &self.error
     }
@@ -244,6 +250,7 @@ pub struct MidHandshakeClientBuilder<S> {
 impl<S> MidHandshakeClientBuilder<S> {
     /// Returns a shared reference to the inner stream.
     #[inline(always)]
+    #[must_use]
     pub fn get_ref(&self) -> &S {
         self.stream.get_ref()
     }
@@ -256,6 +263,7 @@ impl<S> MidHandshakeClientBuilder<S> {
 
     /// Returns the error which caused the handshake interruption.
     #[inline(always)]
+    #[must_use]
     pub fn error(&self) -> &Error {
         self.stream.error()
     }
@@ -406,7 +414,7 @@ impl SslProtocol {
     /// Only the SSL 2.0 protocol is accepted.
     pub const SSL2: Self = Self(kSSLProtocol2);
 
-    /// The DTLSv1 protocol is preferred.
+    /// The `DTLSv1` protocol is preferred.
     pub const DTLS1: Self = Self(kDTLSProtocol1);
 
     /// Only the SSL 3.0 protocol is accepted.
@@ -494,7 +502,7 @@ impl SslContext {
             // SSLSetPeerDomainName doesn't need a null terminated string
             cvt(SSLSetPeerDomainName(
                 self.0,
-                peer_name.as_ptr() as *const _,
+                peer_name.as_ptr().cast(),
                 peer_name.len(),
             ))
         }
@@ -508,7 +516,7 @@ impl SslContext {
             let mut buf = vec![0; len];
             cvt(SSLGetPeerDomainName(
                 self.0,
-                buf.as_mut_ptr() as *mut _,
+                buf.as_mut_ptr().cast(),
                 &mut len,
             ))?;
             Ok(String::from_utf8(buf).unwrap())
@@ -542,13 +550,7 @@ impl SslContext {
     /// previous session can be resumed without requiring a full handshake.
     #[inline]
     pub fn set_peer_id(&mut self, peer_id: &[u8]) -> Result<()> {
-        unsafe {
-            cvt(SSLSetPeerID(
-                self.0,
-                peer_id.as_ptr() as *const _,
-                peer_id.len(),
-            ))
-        }
+        unsafe { cvt(SSLSetPeerID(self.0, peer_id.as_ptr().cast(), peer_id.len())) }
     }
 
     /// Returns the peer ID of this session.
@@ -560,7 +562,7 @@ impl SslContext {
             if ptr.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(slice::from_raw_parts(ptr as *const _, len)))
+                Ok(Some(slice::from_raw_parts(ptr.cast(), len)))
             }
         }
     }
@@ -812,7 +814,7 @@ impl SslContext {
             cvt(SSLSetProtocolVersionEnabled(
                 self.0,
                 protocol.0,
-                enabled as Boolean,
+                Boolean::from(enabled),
             ))
         }
     }
@@ -868,7 +870,7 @@ impl SslContext {
                 panic: None,
             };
             let stream = Box::into_raw(Box::new(stream));
-            let ret = SSLSetConnection(self.0, stream as *mut _);
+            let ret = SSLSetConnection(self.0, stream.cast());
             if ret != errSecSuccess {
                 let _conn = Box::from_raw(stream);
                 return Err(Error::from_code(ret));
@@ -919,7 +921,7 @@ where
     S: Read,
 {
     let conn: &mut Connection<S> = &mut *(connection as *mut _);
-    let data = slice::from_raw_parts_mut(data as *mut u8, *data_length);
+    let data = slice::from_raw_parts_mut(data.cast::<u8>(), *data_length);
     let mut start = 0;
     let mut ret = errSecSuccess;
 
@@ -1006,7 +1008,7 @@ impl<S> Drop for SslStream<S> {
             let mut conn = ptr::null();
             let ret = SSLGetConnection(self.ctx.0, &mut conn);
             assert!(ret == errSecSuccess);
-            Box::<Connection<S>>::from_raw(conn as *mut _);
+            let _ = Box::<Connection<S>>::from_raw(conn as *mut _);
         }
     }
 }
@@ -1033,6 +1035,7 @@ impl<S> SslStream<S> {
 
     /// Returns a shared reference to the inner stream.
     #[inline(always)]
+    #[must_use]
     pub fn get_ref(&self) -> &S {
         &self.connection().stream
     }
@@ -1045,6 +1048,7 @@ impl<S> SslStream<S> {
 
     /// Returns a shared reference to the `SslContext` of the stream.
     #[inline(always)]
+    #[must_use]
     pub fn context(&self) -> &SslContext {
         &self.ctx
     }
@@ -1130,15 +1134,17 @@ impl<S: Read + Write> Read for SslStream<S> {
 
         unsafe {
             let mut nread = 0;
-            let ret = SSLRead(self.ctx.0, buf.as_mut_ptr() as *mut _, to_read, &mut nread);
+            let ret = SSLRead(self.ctx.0, buf.as_mut_ptr().cast(), to_read, &mut nread);
             // SSLRead can return an error at the same time it returns the last
             // chunk of data (!)
             if nread > 0 {
-                return Ok(nread as usize);
+                return Ok(nread);
             }
 
             match ret {
                 errSSLClosedGraceful | errSSLClosedAbort | errSSLClosedNoNotify => Ok(0),
+                // this error isn't fatal
+                errSSLPeerAuthCompleted => self.read(buf),
                 _ => Err(self.get_error(ret)),
             }
         }
@@ -1155,14 +1161,14 @@ impl<S: Read + Write> Write for SslStream<S> {
             let mut nwritten = 0;
             let ret = SSLWrite(
                 self.ctx.0,
-                buf.as_ptr() as *const _,
+                buf.as_ptr().cast(),
                 buf.len(),
                 &mut nwritten,
             );
             // just to be safe, base success off of nwritten rather than ret
             // for the same reason as in read
             if nwritten > 0 {
-                Ok(nwritten as usize)
+                Ok(nwritten)
             } else {
                 Err(self.get_error(ret))
             }
@@ -1204,6 +1210,7 @@ impl Default for ClientBuilder {
 impl ClientBuilder {
     /// Creates a new builder with default options.
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self {
             identity: None,
@@ -1438,6 +1445,7 @@ pub struct ServerBuilder {
 impl ServerBuilder {
     /// Creates a new `ServerBuilder` which will use the specified identity
     /// and certificate chain for handshakes.
+    #[must_use]
     pub fn new(identity: &SecIdentity, certs: &[SecCertificate]) -> Self {
         Self {
             identity: identity.clone(),
@@ -1456,7 +1464,7 @@ impl ServerBuilder {
             .passphrase(passphrase)
             .import(pkcs12_der)?
             .into_iter()
-            .flat_map(|idendity| {
+            .filter_map(|idendity| {
                 let certs = idendity.cert_chain.unwrap_or_default();
                 idendity.identity.map(|identity| (identity, certs))
             })
@@ -1492,7 +1500,6 @@ impl ServerBuilder {
 
 #[cfg(test)]
 mod test {
-    use std::io;
     use std::io::prelude::*;
     use std::net::TcpStream;
 
@@ -1678,7 +1685,7 @@ mod test {
     }
 
     #[test]
-    #[cfg_attr(target_os = "ios", ignore)] // FIXME what's going on with ios?
+    #[cfg_attr(any(target_os = "ios", target_os = "tvos", target_os = "watchos"), ignore)] // FIXME what's going on with ios?
     fn cipher_configuration() {
         let mut ctx = p!(SslContext::new(
             SslProtocolSide::SERVER,
@@ -1714,7 +1721,7 @@ mod test {
     }
 
     #[test]
-    #[cfg_attr(target_os = "ios", ignore)] // FIXME same issue as cipher_configuration
+    #[cfg_attr(any(target_os = "ios", target_os = "tvos", target_os = "watchos"), ignore)] // FIXME same issue as cipher_configuration
     fn test_builder_blacklist_ciphers() {
         let stream = p!(TcpStream::connect("google.com:443"));
 

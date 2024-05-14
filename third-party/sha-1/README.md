@@ -9,6 +9,8 @@
 
 Pure Rust implementation of the [SHA-1 hash function][1].
 
+**This crate is deprecated! Use the [`sha1`](https://crates.io/crates/sha1) crate instead.**
+
 [Documentation][docs-link]
 
 ## 🚨 Warning: Cryptographically Broken 🚨
@@ -48,10 +50,10 @@ dual licensed as above, without any additional terms or conditions.
 
 [//]: # (badges)
 
-[crate-image]: https://img.shields.io/crates/v/sha-1.svg
-[crate-link]: https://crates.io/crates/sha-1
-[docs-image]: https://docs.rs/sha-1/badge.svg
-[docs-link]: https://docs.rs/sha-1/
+[crate-image]: https://img.shields.io/crates/v/sha1.svg
+[crate-link]: https://crates.io/crates/sha1
+[docs-image]: https://docs.rs/sha1/badge.svg
+[docs-link]: https://docs.rs/sha1/
 [license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
 [rustc-image]: https://img.shields.io/badge/rustc-1.41+-blue.svg
 [chat-image]: https://img.shields.io/badge/zulip-join_chat-blue.svg

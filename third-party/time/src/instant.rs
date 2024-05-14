@@ -1,12 +1,14 @@
 //! The [`Instant`] struct and its associated `impl`s.
 
+#![allow(deprecated)]
+
+use core::borrow::Borrow;
 use core::cmp::{Ord, Ordering, PartialEq, PartialOrd};
-use core::convert::{TryFrom, TryInto};
 use core::ops::{Add, Sub};
 use core::time::Duration as StdDuration;
-use std::borrow::Borrow;
 use std::time::Instant as StdInstant;
 
+use crate::internal_macros::{impl_add_assign, impl_sub_assign};
 use crate::Duration;
 
 /// A measurement of a monotonically non-decreasing clock. Opaque and useful only with [`Duration`].
@@ -26,7 +28,7 @@ use crate::Duration;
 ///
 /// This implementation allows for operations with signed [`Duration`]s, but is otherwise identical
 /// to [`std::time::Instant`].
-#[cfg_attr(__time_03_docs, doc(cfg(feature = "std")))]
+#[deprecated(since = "0.3.35", note = "import `time::ext::InstantExt` instead")]
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant(pub StdInstant);
@@ -36,6 +38,7 @@ impl Instant {
     /// Returns an `Instant` corresponding to "now".
     ///
     /// ```rust
+    /// # #![allow(deprecated)]
     /// # use time::Instant;
     /// println!("{:?}", Instant::now());
     /// ```
@@ -47,6 +50,7 @@ impl Instant {
     /// be nonnegative if the instant is not synthetically created.
     ///
     /// ```rust
+    /// # #![allow(deprecated)]
     /// # use time::{Instant, ext::{NumericalStdDuration, NumericalDuration}};
     /// # use std::thread;
     /// let instant = Instant::now();
@@ -64,6 +68,7 @@ impl Instant {
     /// otherwise.
     ///
     /// ```rust
+    /// # #![allow(deprecated)]
     /// # use time::{Instant, ext::NumericalDuration};
     /// let now = Instant::now();
     /// assert_eq!(now.checked_add(5.seconds()), Some(now + 5.seconds()));
@@ -73,10 +78,10 @@ impl Instant {
         if duration.is_zero() {
             Some(self)
         } else if duration.is_positive() {
-            self.0.checked_add(duration.abs_std()).map(Self)
+            self.0.checked_add(duration.unsigned_abs()).map(Self)
         } else {
             debug_assert!(duration.is_negative());
-            self.0.checked_sub(duration.abs_std()).map(Self)
+            self.0.checked_sub(duration.unsigned_abs()).map(Self)
         }
     }
 
@@ -85,6 +90,7 @@ impl Instant {
     /// otherwise.
     ///
     /// ```rust
+    /// # #![allow(deprecated)]
     /// # use time::{Instant, ext::NumericalDuration};
     /// let now = Instant::now();
     /// assert_eq!(now.checked_sub(5.seconds()), Some(now - 5.seconds()));
@@ -94,10 +100,10 @@ impl Instant {
         if duration.is_zero() {
             Some(self)
         } else if duration.is_positive() {
-            self.0.checked_sub(duration.abs_std()).map(Self)
+            self.0.checked_sub(duration.unsigned_abs()).map(Self)
         } else {
             debug_assert!(duration.is_negative());
-            self.0.checked_add(duration.abs_std()).map(Self)
+            self.0.checked_add(duration.unsigned_abs()).map(Self)
         }
     }
     // endregion checked arithmetic
@@ -105,6 +111,7 @@ impl Instant {
     /// Obtain the inner [`std::time::Instant`].
     ///
     /// ```rust
+    /// # #![allow(deprecated)]
     /// # use time::Instant;
     /// let now = Instant::now();
     /// assert_eq!(now.into_inner(), now.0);
@@ -130,6 +137,9 @@ impl From<Instant> for StdInstant {
 impl Sub for Instant {
     type Output = Duration;
 
+    /// # Panics
+    ///
+    /// This may panic if an overflow occurs.
     fn sub(self, other: Self) -> Self::Output {
         match self.0.cmp(&other.0) {
             Ordering::Equal => Duration::ZERO,
@@ -161,12 +171,18 @@ impl Sub<Instant> for StdInstant {
 impl Add<Duration> for Instant {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// This function may panic if the resulting point in time cannot be represented by the
+    /// underlying data structure.
     fn add(self, duration: Duration) -> Self::Output {
         if duration.is_positive() {
-            Self(self.0 + duration.abs_std())
+            Self(self.0 + duration.unsigned_abs())
         } else if duration.is_negative() {
-            Self(self.0 - duration.abs_std())
+            #[allow(clippy::unchecked_duration_subtraction)]
+            Self(self.0 - duration.unsigned_abs())
         } else {
+            debug_assert!(duration.is_zero());
             self
         }
     }
@@ -194,12 +210,18 @@ impl_add_assign!(StdInstant: Duration);
 impl Sub<Duration> for Instant {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// This function may panic if the resulting point in time cannot be represented by the
+    /// underlying data structure.
     fn sub(self, duration: Duration) -> Self::Output {
         if duration.is_positive() {
-            Self(self.0 - duration.abs_std())
+            #[allow(clippy::unchecked_duration_subtraction)]
+            Self(self.0 - duration.unsigned_abs())
         } else if duration.is_negative() {
-            Self(self.0 + duration.abs_std())
+            Self(self.0 + duration.unsigned_abs())
         } else {
+            debug_assert!(duration.is_zero());
             self
         }
     }
@@ -216,7 +238,12 @@ impl Sub<Duration> for StdInstant {
 impl Sub<StdDuration> for Instant {
     type Output = Self;
 
+    /// # Panics
+    ///
+    /// This function may panic if the resulting point in time cannot be represented by the
+    /// underlying data structure.
     fn sub(self, duration: StdDuration) -> Self::Output {
+        #[allow(clippy::unchecked_duration_subtraction)]
         Self(self.0 - duration)
     }
 }

@@ -1,4 +1,4 @@
-#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::needless_late_init, clippy::uninlined_format_args)]
 
 use std::fmt::{self, Debug, Display};
 use thiserror::Error;

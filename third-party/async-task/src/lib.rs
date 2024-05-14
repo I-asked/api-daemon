@@ -67,12 +67,40 @@
 //! vanishes and only reappears when its [`Waker`][`core::task::Waker`] wakes the task, thus
 //! scheduling it to be run again.
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![doc(test(attr(deny(rust_2018_idioms, warnings))))]
 #![doc(test(attr(allow(unused_extern_crates, unused_variables))))]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
+
+/// We can't use `?` in const contexts yet, so this macro acts
+/// as a workaround.
+macro_rules! leap {
+    ($x: expr) => {{
+        match ($x) {
+            Some(val) => val,
+            None => return None,
+        }
+    }};
+}
+
+macro_rules! leap_unwrap {
+    ($x: expr) => {{
+        match ($x) {
+            Some(val) => val,
+            None => panic!("called `Option::unwrap()` on a `None` value"),
+        }
+    }};
+}
 
 mod header;
 mod raw;
@@ -81,7 +109,9 @@ mod state;
 mod task;
 mod utils;
 
-pub use crate::runnable::{spawn, spawn_unchecked, Runnable};
+pub use crate::runnable::{
+    spawn, spawn_unchecked, Builder, Runnable, Schedule, ScheduleInfo, WithInfo,
+};
 pub use crate::task::{FallibleTask, Task};
 
 #[cfg(feature = "std")]

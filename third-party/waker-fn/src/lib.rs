@@ -3,13 +3,23 @@
 //! A [`Waker`] is just a fancy callback. This crate converts regular closures into wakers.
 
 #![no_std]
+#![forbid(unsafe_code)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
+#[cfg(not(feature = "portable-atomic"))]
 extern crate alloc;
 
-use alloc::sync::Arc;
-use core::mem::{self, ManuallyDrop};
-use core::task::{RawWaker, RawWakerVTable, Waker};
+#[cfg(not(feature = "portable-atomic"))]
+use alloc::{sync::Arc, task::Wake};
+use core::task::Waker;
+#[cfg(feature = "portable-atomic")]
+use portable_atomic_util::{task::Wake, Arc};
 
 /// Converts a closure into a [`Waker`].
 ///
@@ -26,38 +36,31 @@ use core::task::{RawWaker, RawWakerVTable, Waker};
 /// waker.wake();        // Prints "woken".
 /// ```
 pub fn waker_fn<F: Fn() + Send + Sync + 'static>(f: F) -> Waker {
-    let raw = Arc::into_raw(Arc::new(f)) as *const ();
-    let vtable = &Helper::<F>::VTABLE;
-    unsafe { Waker::from_raw(RawWaker::new(raw, vtable)) }
+    Waker::from(Arc::new(Helper(f)))
 }
 
 struct Helper<F>(F);
 
-impl<F: Fn() + Send + Sync + 'static> Helper<F> {
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        Self::clone_waker,
-        Self::wake,
-        Self::wake_by_ref,
-        Self::drop_waker,
-    );
-
-    unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
-        let arc = ManuallyDrop::new(Arc::from_raw(ptr as *const F));
-        mem::forget(arc.clone());
-        RawWaker::new(ptr, &Self::VTABLE)
+#[cfg(not(feature = "portable-atomic"))]
+impl<F: Fn() + Send + Sync + 'static> Wake for Helper<F> {
+    fn wake(self: Arc<Self>) {
+        (self.0)();
     }
 
-    unsafe fn wake(ptr: *const ()) {
-        let arc = Arc::from_raw(ptr as *const F);
-        (arc)();
+    fn wake_by_ref(self: &Arc<Self>) {
+        (self.0)();
+    }
+}
+// Note: Unlike std::task::Wake, all methods take `this:` instead of `self:`.
+// This is because using portable_atomic_util::Arc as a receiver requires the
+// unstable arbitrary_self_types feature.
+#[cfg(feature = "portable-atomic")]
+impl<F: Fn() + Send + Sync + 'static> Wake for Helper<F> {
+    fn wake(this: Arc<Self>) {
+        (this.0)();
     }
 
-    unsafe fn wake_by_ref(ptr: *const ()) {
-        let arc = ManuallyDrop::new(Arc::from_raw(ptr as *const F));
-        (arc)();
-    }
-
-    unsafe fn drop_waker(ptr: *const ()) {
-        drop(Arc::from_raw(ptr as *const F));
+    fn wake_by_ref(this: &Arc<Self>) {
+        (this.0)();
     }
 }

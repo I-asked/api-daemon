@@ -3,17 +3,110 @@
 //! This crate contains the [`ValueBag`] type, a container for an anonymous structured value.
 //! `ValueBag`s can be captured in various ways and then formatted, inspected, and serialized
 //! without losing their original structure.
+//!
+//! The producer of a [`ValueBag`] may use a different strategy for capturing than the eventual
+//! consumer. They don't need to coordinate directly.
 
-#![cfg_attr(value_bag_capture_const_type_id, feature(const_type_id))]
-#![doc(html_root_url = "https://docs.rs/value-bag/1.0.0-alpha.8")]
+#![doc(html_root_url = "https://docs.rs/value-bag/1.9.0")]
 #![no_std]
+#![allow(
+    clippy::unnecessary_fallible_conversions,
+    clippy::explicit_auto_deref,
+    clippy::wrong_self_convention
+)]
+
+/*
+# Crate design
+
+This library internally ties several frameworks together. The details of how
+this is done are hidden from end-users. It looks roughly like this:
+
+            ┌─────┐     ┌──────┐
+            │sval2│     │serde1│  1. libs on crates.io
+            └──┬──┘     └─┬─┬──┘
+               ├──────────┘ │
+       ┌───────▼──┐     ┌───▼───────┐
+       │meta/sval2│     │meta/serde1│  2. meta crates with features
+       └───────┬──┘     └───┬───────┘
+               │            │
+ ┌─────────────▼──┐     ┌───▼─────────────┐
+ │internal/sval/v2◄─────┤internal/serde/v1│  3. internal modules with `InternalVisitor`
+ └─────────────┬──┘     └───┬─────────────┘
+               │            │
+        ┌──────▼────────┬───▼────────────┐
+        │Internal::Sval2│Internal::Serde1│  4. variants in `Internal` enum
+        └───────────────┼────────────────┘
+                        │
+┌───────────────────────▼────────────────────────┐
+│ValueBag::capture_sval2│ValueBag::capture_serde1│  5. ctors on `ValueBag`
+└───────────────────────┼────────────────────────┘
+                        │
+┌───────────────────────▼───────────────────────────┐
+│impl Value for ValueBag│impl Serialize for ValueBag│  6. trait impls on `ValueBag`
+└───────────────────────┴───────────────────────────┘
+
+## 1. libs on crates.io
+
+These are the frameworks like `serde` or `sval`.
+
+## 2. meta crates with features
+
+These are crates that are internal to `value-bag`. They depend on the public
+framework and any utility crates that come along with it. They also expose
+features for any other framework. This is done this way so `value-bag` can use
+Cargo's `crate?/feature` syntax to conditionally add framework support.
+
+## 3. internal modules with `InternalVisitor`
+
+These are modules in `value-bag` that integrate the framework using the
+`InternalVisitor` trait. This makes it possible for that framework to cast
+primitive values and pass-through any other framework.
+
+## 4. variants in `Internal` enum
+
+These are individual variants on the `Internal` enum that the `ValueBag`
+type wraps. Each framework has one or more variants in this enum.
+
+## 5. ctors on `ValueBag`
+
+These are constructors for producers of `ValueBag`s that accept a value
+implementing a serialization trait from a specific framework, like
+`serde::Serialize` or `sval::Value`.
+
+## 7. trait impls on `ValueBag`
+
+These are trait impls for consumers of `ValueBag`s that serialize the
+underlying value, bridging it if it was produced for a different framework.
+*/
 
 #[cfg(any(feature = "std", test))]
 #[macro_use]
 #[allow(unused_imports)]
 extern crate std;
 
-#[cfg(not(any(feature = "std", test)))]
+#[cfg(all(not(test), feature = "alloc", not(feature = "std")))]
+#[macro_use]
+#[allow(unused_imports)]
+extern crate core;
+
+#[cfg(all(not(test), feature = "alloc", not(feature = "std")))]
+#[macro_use]
+#[allow(unused_imports)]
+extern crate alloc;
+
+#[cfg(all(not(test), feature = "alloc", not(feature = "std")))]
+#[allow(unused_imports)]
+mod std {
+    pub use crate::{
+        alloc::{borrow, boxed, string, vec},
+        core::*,
+    };
+
+    #[cfg(feature = "owned")]
+    pub use crate::alloc::sync;
+}
+
+#[cfg(not(any(feature = "alloc", feature = "std", test)))]
 #[macro_use]
 #[allow(unused_imports)]
 extern crate core as std;
@@ -26,6 +119,11 @@ pub mod visit;
 
 #[cfg(any(test, feature = "test"))]
 pub mod test;
+
+#[cfg(feature = "owned")]
+mod owned;
+#[cfg(feature = "owned")]
+pub use self::owned::*;
 
 pub use self::error::Error;
 
@@ -92,7 +190,7 @@ pub use self::error::Error;
 /// ```
 /// use value_bag::{ValueBag, fill::Slot};
 ///
-/// let value = ValueBag::from_fill(&|slot: &mut Slot| {
+/// let value = ValueBag::from_fill(&|slot: Slot| {
 ///     #[derive(Debug)]
 ///     struct MyShortLivedValue;
 ///
@@ -111,7 +209,7 @@ pub use self::error::Error;
 /// struct FillDebug;
 ///
 /// impl Fill for FillDebug {
-///     fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
+///     fn fill(&self, slot: Slot) -> Result<(), Error> {
 ///         slot.fill_debug(&42i32 as &dyn Debug)
 ///     }
 /// }
@@ -207,80 +305,30 @@ pub use self::error::Error;
 ///
 /// ## Using `sval`
 ///
-/// When the `sval1` feature is enabled, any `ValueBag` can be serialized using `sval`.
+/// When the `sval2` feature is enabled, any `ValueBag` can be serialized using `sval`.
 /// This makes it possible to visit any typed structure captured in the `ValueBag`,
 /// including complex datatypes like maps and sequences.
 ///
 /// `sval` doesn't need to allocate so can be used in no-std environments.
 ///
-/// First, enable the `sval1` feature in your `Cargo.toml`:
+/// First, enable the `sval2` feature in your `Cargo.toml`:
 ///
 /// ```toml
 /// [dependencies.value-bag]
-/// features = ["sval1"]
+/// features = ["sval2"]
 /// ```
 ///
 /// Then stream the contents of the `ValueBag` using `sval`.
 ///
 /// ```
-/// #[cfg(not(all(feature = "std", feature = "sval1")))] fn main() {}
-/// #[cfg(all(feature = "std", feature = "sval1"))]
+/// # #[cfg(not(all(feature = "std", feature = "sval2")))] fn main() {}
+/// # #[cfg(all(feature = "std", feature = "sval2"))]
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # extern crate sval1_json as sval_json;
+/// # use value_bag_sval2::json as sval_json;
 /// use value_bag::ValueBag;
 ///
 /// let value = ValueBag::from(42i64);
-/// let json = sval_json::to_string(value)?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ```
-/// #[cfg(not(all(feature = "std", feature = "sval1")))] fn main() {}
-/// #[cfg(all(feature = "std", feature = "sval1"))]
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # extern crate sval1_lib as sval;
-/// # fn escape(buf: &[u8]) -> &[u8] { buf }
-/// # fn itoa_fmt<T>(num: T) -> Vec<u8> { vec![] }
-/// # fn ryu_fmt<T>(num: T) -> Vec<u8> { vec![] }
-/// use value_bag::ValueBag;
-/// use sval::stream::{self, Stream};
-///
-/// // Implement some simple custom serialization
-/// struct MyStream(Vec<u8>);
-/// impl Stream for MyStream {
-///     fn u64(&mut self, v: u64) -> stream::Result {
-///         self.0.extend_from_slice(itoa_fmt(v).as_slice());
-///         Ok(())
-///     }
-///
-///     fn i64(&mut self, v: i64) -> stream::Result {
-///         self.0.extend_from_slice(itoa_fmt(v).as_slice());
-///         Ok(())
-///     }
-///
-///     fn f64(&mut self, v: f64) -> stream::Result {
-///         self.0.extend_from_slice(ryu_fmt(v).as_slice());
-///         Ok(())
-///     }
-///
-///     fn str(&mut self, v: &str) -> stream::Result {
-///         self.0.push(b'\"');
-///         self.0.extend_from_slice(escape(v.as_bytes()));
-///         self.0.push(b'\"');
-///         Ok(())
-///     }
-///
-///     fn bool(&mut self, v: bool) -> stream::Result {
-///         self.0.extend_from_slice(if v { b"true" } else { b"false" });
-///         Ok(())
-///     }
-/// }
-///
-/// let value = ValueBag::from(42i64);
-///
-/// let mut stream = MyStream(vec![]);
-/// sval::stream(&mut stream, &value)?;
+/// let json = sval_json::stream_to_string(value)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -303,10 +351,10 @@ pub use self::error::Error;
 /// Then stream the contents of the `ValueBag` using `serde`.
 ///
 /// ```
-/// #[cfg(not(all(feature = "std", feature = "serde1")))] fn main() {}
-/// #[cfg(all(feature = "std", feature = "serde1"))]
+/// # #[cfg(not(all(feature = "std", feature = "serde1")))] fn main() {}
+/// # #[cfg(all(feature = "std", feature = "serde1"))]
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # extern crate serde1_json as serde_json;
+/// # use value_bag_serde1::json as serde_json;
 /// use value_bag::ValueBag;
 ///
 /// let value = ValueBag::from(42i64);
@@ -348,16 +396,239 @@ pub use self::error::Error;
 ///
 /// assert!(value.downcast_ref::<SystemTime>().is_some());
 /// ```
+///
+/// # Working with sequences
+///
+/// The `seq` feature of `value-bag` enables utilities for working with values that are sequences.
+/// First, enable the `seq` feature in your `Cargo.toml`:
+///
+/// ```toml
+/// [dependencies.value-bag]
+/// features = ["seq"]
+/// ```
+///
+/// Slices and arrays can be captured as sequences:
+///
+/// ```
+/// # #[cfg(not(all(feature = "serde1", feature = "seq")))] fn main() {}
+/// # #[cfg(all(feature = "serde1", feature = "seq"))]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// # use value_bag_serde1::json as serde_json;
+/// use value_bag::ValueBag;
+///
+/// let value = ValueBag::from_seq_slice(&[1, 2, 3]);
+///
+/// assert_eq!("[1,2,3]", serde_json::to_string(&value)?);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// A sequence captured with either `sval` or `serde` can have its elements extracted:
+///
+/// ```
+/// # #[cfg(not(all(feature = "serde1", feature = "seq")))] fn main() {}
+/// # #[cfg(all(feature = "serde1", feature = "seq"))]
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use value_bag::ValueBag;
+///
+/// let value = ValueBag::from_serde1(&[1.0, 2.0, 3.0]);
+///
+/// let seq = value.to_f64_seq::<Vec<Option<f64>>>().ok_or("not a sequence")?;
+///
+/// assert_eq!(vec![Some(1.0), Some(2.0), Some(3.0)], seq);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct ValueBag<'v> {
     inner: internal::Internal<'v>,
 }
 
 impl<'v> ValueBag<'v> {
-    /// Get a `ValueBag` from a reference to a `ValueBag`.
-    pub fn by_ref<'u>(&'u self) -> ValueBag<'u> {
+    /// Get an empty `ValueBag`.
+    #[inline]
+    pub const fn empty() -> ValueBag<'v> {
         ValueBag {
-            inner: self.inner,
+            inner: internal::Internal::None,
+        }
+    }
+
+    /// Get a `ValueBag` from an `Option`.
+    ///
+    /// This method will return `ValueBag::empty` if the value is `None`.
+    #[inline]
+    pub fn from_option(v: Option<impl Into<ValueBag<'v>>>) -> ValueBag<'v> {
+        match v {
+            Some(v) => v.into(),
+            None => ValueBag::empty(),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u8`.
+    #[inline]
+    pub const fn from_u8(v: u8) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Unsigned(v as u64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u16`.
+    #[inline]
+    pub const fn from_u16(v: u16) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Unsigned(v as u64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u32`.
+    #[inline]
+    pub const fn from_u32(v: u32) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Unsigned(v as u64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u64`.
+    #[inline]
+    pub const fn from_u64(v: u64) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Unsigned(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `usize`.
+    #[inline]
+    pub const fn from_usize(v: usize) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Unsigned(v as u64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u128`.
+    #[inline]
+    pub const fn from_u128_ref(v: &'v u128) -> ValueBag<'v> {
+        ValueBag {
+            #[cfg(not(feature = "inline-i128"))]
+            inner: internal::Internal::BigUnsigned(v),
+            #[cfg(feature = "inline-i128")]
+            inner: internal::Internal::BigUnsigned(*v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `u128`.
+    #[inline]
+    #[cfg(feature = "inline-i128")]
+    pub const fn from_u128(v: u128) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::BigUnsigned(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i8`.
+    #[inline]
+    pub const fn from_i8(v: i8) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Signed(v as i64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i16`.
+    #[inline]
+    pub const fn from_i16(v: i16) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Signed(v as i64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i32`.
+    #[inline]
+    pub const fn from_i32(v: i32) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Signed(v as i64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i64`.
+    #[inline]
+    pub const fn from_i64(v: i64) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Signed(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `isize`.
+    #[inline]
+    pub const fn from_isize(v: isize) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Signed(v as i64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i128`.
+    #[inline]
+    pub const fn from_i128_ref(v: &'v i128) -> ValueBag<'v> {
+        ValueBag {
+            #[cfg(not(feature = "inline-i128"))]
+            inner: internal::Internal::BigSigned(v),
+            #[cfg(feature = "inline-i128")]
+            inner: internal::Internal::BigSigned(*v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `i128`.
+    #[inline]
+    #[cfg(feature = "inline-i128")]
+    pub const fn from_i128(v: i128) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::BigSigned(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `f32`.
+    #[inline]
+    pub const fn from_f32(v: f32) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Float(v as f64),
+        }
+    }
+
+    /// Get a `ValueBag` from a `f64`.
+    #[inline]
+    pub const fn from_f64(v: f64) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Float(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `bool`.
+    #[inline]
+    pub const fn from_bool(v: bool) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Bool(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `str`.
+    #[inline]
+    pub const fn from_str(v: &'v str) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Str(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a `char`.
+    #[inline]
+    pub const fn from_char(v: char) -> ValueBag<'v> {
+        ValueBag {
+            inner: internal::Internal::Char(v),
+        }
+    }
+
+    /// Get a `ValueBag` from a reference to a `ValueBag`.
+    #[inline]
+    pub const fn by_ref(&self) -> ValueBag<'_> {
+        ValueBag {
+            inner: self.inner.by_ref(),
         }
     }
 }
@@ -367,18 +638,20 @@ mod tests {
     use super::*;
     use crate::std::mem;
 
+    #[cfg(feature = "inline-i128")]
+    const SIZE_LIMIT_U64: usize = 4;
+    #[cfg(not(feature = "inline-i128"))]
+    const SIZE_LIMIT_U64: usize = 3;
+
     #[test]
     fn value_bag_size() {
         let size = mem::size_of::<ValueBag<'_>>();
-        let limit = mem::size_of::<u64>() * 6;
+        let limit = mem::size_of::<u64>() * SIZE_LIMIT_U64;
 
         if size > limit {
             panic!(
-                "`ValueBag` size ({} bytes) is too large (expected up to {} bytes)\n`Primitive`: {} bytes\n`(`&dyn` + `TypeId`): {} bytes",
-                size,
-                limit,
-                mem::size_of::<internal::Primitive<'_>>(),
-                mem::size_of::<(&dyn internal::fmt::Debug, crate::std::any::TypeId)>(),
+                "`ValueBag` size ({} bytes) is too large (expected up to {} bytes)",
+                size, limit,
             );
         }
     }

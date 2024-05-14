@@ -5,7 +5,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
-//! This library provides type-safe and fully-featured `Mutex` and `RwLock`
+//! This library provides type-safe and fully-featured [`Mutex`] and [`RwLock`]
 //! types which wrap a simple raw mutex or rwlock type. This has several
 //! benefits: not only does it eliminate a large portion of the work in
 //! implementing custom lock types, it also allows users to write code which is
@@ -20,7 +20,7 @@
 //!    your mutex guard as a type alias for `lock_api::MutexGuard`.
 //!    See the [example](#example) below for details.
 //!
-//! This process is similar for RwLocks, except that two guards need to be
+//! This process is similar for [`RwLock`]s, except that two guards need to be
 //! exported instead of one. (Or 3 guards if your type supports upgradable read
 //! locks, see [extension traits](#extension-traits) below for details)
 //!
@@ -84,13 +84,11 @@
 //! - `owning_ref`: Allows your lock types to be used with the `owning_ref` crate.
 //! - `arc_lock`: Enables locking from an `Arc`. This enables types such as `ArcMutexGuard`. Note that this
 //!   requires the `alloc` crate to be present.
-//! - `nightly`: Enables nightly-only features. At the moment the only such
-//!   feature is `const fn` constructors for lock types.
 
 #![no_std]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
-#![cfg_attr(feature = "nightly", feature(const_fn_trait_bound))]
 
 #[macro_use]
 extern crate scopeguard;
@@ -109,7 +107,9 @@ unsafe impl Sync for GuardNoSend {}
 mod mutex;
 pub use crate::mutex::*;
 
+#[cfg(feature = "atomic_usize")]
 mod remutex;
+#[cfg(feature = "atomic_usize")]
 pub use crate::remutex::*;
 
 mod rwlock;

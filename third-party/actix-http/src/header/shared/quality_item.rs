@@ -1,8 +1,7 @@
-use std::{cmp, convert::TryFrom as _, fmt, str};
-
-use crate::error::ParseError;
+use std::{cmp, fmt, str};
 
 use super::Quality;
+use crate::error::ParseError;
 
 /// Represents an item with a quality value as defined
 /// in [RFC 7231 §5.3.1](https://datatracker.ietf.org/doc/html/rfc7231#section-5.3.1).
@@ -147,7 +146,7 @@ mod tests {
 
     // copy of encoding from actix-web headers
     #[allow(clippy::enum_variant_names)] // allow Encoding prefix on EncodingExt
-    #[derive(Clone, PartialEq, Debug)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Encoding {
         Chunked,
         Brotli,

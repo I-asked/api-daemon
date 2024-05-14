@@ -1,3 +1,82 @@
+# Version 2.3.2
+
+- Fix usage of the wrong socket flags on AIX. (#187)
+
+# Version 2.3.1
+
+- On Windows, call `WSAStartup` before any raw socket functions. (#183)
+
+# Version 2.3.0
+
+- Add `Waitable`, which allows waiting for waitable handles on
+  Windows. (#152)
+
+# Version 2.2.2
+
+- Fix an `EINVAL` error that would occur when abstract sockets are used. (#176)
+
+# Version 2.2.1
+
+- Remove dependency on `waker-fn`. (#165)
+- Update `windows-sys` to v0.52.0. (#173)
+
+# Version 2.2.0
+
+- Bump `async-lock` and `futures-lite` to their latest version. (#170)
+
+# Version 2.1.0
+
+- Implement `IoSafe` for `std::process::{ChildStdin, ChildStdout, ChildStderr}`. (#162)
+
+# Version 2.0.0
+
+- **Breaking:** `Async::new()` now takes types that implement `AsFd`/`AsSocket` instead of `AsRawFd`/`AsRawSocket`, in order to implement I/O safety. (#142)
+- **Breaking:** `Async::get_mut()`, `Async::read_with_mut()` and `Async::write_with_mut()` are now `unsafe`. The underlying source is technically "borrowed" by the polling instance, so moving it out would be unsound. (#142)
+- Expose miscellaneous `kqueue` filters in the `os::kqueue` module. (#112)
+- Expose a way to get the underlying `Poller`'s file descriptor on Unix. (#125)
+- Add a new `Async::new_nonblocking` method to allow users to avoid duplicating an already nonblocking socket. (#159)
+- Remove the unused `fastrand` and `memchr` dependencies. (#131)
+- Use `tracing` instead of `log`. (#140)
+- Support ESP-IDF. (#144)
+- Optimize the `block_on` function to reduce allocation, leading to a slight performance improvement. (#149)
+
+# Version 1.13.0
+
+- Use [`rustix`] instead of [`libc`]/[`windows-sys`] for system calls (#76)
+- Add a `will_fire` method to `Timer` to test if it will ever fire (#106)
+- Reduce syscalls in `Async::new` (#107)
+- Improve the drop ergonomics of `Readable` and `Writable` (#109)
+- Change the "`wepoll`" in documentation to "`IOCP`" (#116)
+
+[`rustix`]: https://crates.io/crates/rustix/
+[`libc`]: https://crates.io/crates/libc/
+[`windows-sys`]: https://crates.io/crates/windows-sys/
+
+# Version 1.12.0
+
+- Switch from `winapi` to `windows-sys` (#102)
+
+# Version 1.11.0
+
+- Update `concurrent-queue` to v2. (#99)
+
+# Version 1.10.0
+
+- Remove the dependency on the `once_cell` crate to restore the MSRV. (#95)
+
+# Version 1.9.0
+
+- Fix panic on very large durations. (#87)
+- Add `Timer::never` (#87)
+
+# Version 1.8.0
+
+- Implement I/O safety traits on Rust 1.63+ (#84)
+
+# Version 1.7.0
+
+- Process timers set for exactly `now`. (#73)
+
 # Version 1.6.0
 
 - Add `Readable` and `Writable` futures. (#64, #66)

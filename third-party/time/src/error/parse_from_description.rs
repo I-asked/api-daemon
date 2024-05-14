@@ -1,12 +1,10 @@
 //! Error parsing an input into a [`Parsed`](crate::parsing::Parsed) struct
 
-use core::convert::TryFrom;
 use core::fmt;
 
 use crate::error;
 
 /// An error that occurred while parsing the input into a [`Parsed`](crate::parsing::Parsed) struct.
-#[cfg_attr(__time_03_docs, doc(cfg(feature = "parsing")))]
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseFromDescription {
@@ -15,6 +13,9 @@ pub enum ParseFromDescription {
     InvalidLiteral,
     /// A dynamic component was not valid.
     InvalidComponent(&'static str),
+    /// The input was expected to have ended, but there are characters that remain.
+    #[non_exhaustive]
+    UnexpectedTrailingCharacters,
 }
 
 impl fmt::Display for ParseFromDescription {
@@ -22,7 +23,10 @@ impl fmt::Display for ParseFromDescription {
         match self {
             Self::InvalidLiteral => f.write_str("a character literal was not valid"),
             Self::InvalidComponent(name) => {
-                write!(f, "the '{}' component could not be parsed", name)
+                write!(f, "the '{name}' component could not be parsed")
+            }
+            Self::UnexpectedTrailingCharacters => {
+                f.write_str("unexpected trailing characters; the end of input was expected")
             }
         }
     }
@@ -31,14 +35,12 @@ impl fmt::Display for ParseFromDescription {
 #[cfg(feature = "std")]
 impl std::error::Error for ParseFromDescription {}
 
-#[cfg_attr(__time_03_docs, doc(cfg(feature = "parsing")))]
 impl From<ParseFromDescription> for crate::Error {
     fn from(original: ParseFromDescription) -> Self {
         Self::ParseFromDescription(original)
     }
 }
 
-#[cfg_attr(__time_03_docs, doc(cfg(feature = "parsing")))]
 impl TryFrom<crate::Error> for ParseFromDescription {
     type Error = error::DifferentVariant;
 

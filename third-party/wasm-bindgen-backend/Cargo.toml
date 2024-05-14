@@ -11,22 +11,27 @@
 
 [package]
 edition = "2018"
+rust-version = "1.57"
 name = "wasm-bindgen-backend"
-version = "0.2.79"
+version = "0.2.92"
 authors = ["The wasm-bindgen Developers"]
-description = "Backend code generation of the wasm-bindgen tool\n"
+description = """
+Backend code generation of the wasm-bindgen tool
+"""
 homepage = "https://rustwasm.github.io/wasm-bindgen/"
 documentation = "https://docs.rs/wasm-bindgen-backend"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/rustwasm/wasm-bindgen/tree/master/crates/backend"
+resolver = "2"
+
 [dependencies.bumpalo]
 version = "3.0.0"
 
-[dependencies.lazy_static]
-version = "1.0.2"
-
 [dependencies.log]
 version = "0.4"
+
+[dependencies.once_cell]
+version = "1.12"
 
 [dependencies.proc-macro2]
 version = "1.0"
@@ -35,11 +40,11 @@ version = "1.0"
 version = "1.0"
 
 [dependencies.syn]
-version = "1.0"
+version = "2.0"
 features = ["full"]
 
 [dependencies.wasm-bindgen-shared]
-version = "=0.2.79"
+version = "=0.2.92"
 
 [features]
 extra-traits = ["syn/extra-traits"]

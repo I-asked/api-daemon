@@ -1,4 +1,5 @@
-//! An async multi-producer multi-consumer channel.
+//! An async multi-producer multi-consumer channel, where each message can be received by only
+//! one of all existing consumers.
 //!
 //! There are two kinds of channels:
 //!
@@ -25,22 +26,33 @@
 //! # });
 //! ```
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
-use std::error;
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::usize;
+extern crate alloc;
 
-use concurrent_queue::{ConcurrentQueue, PopError, PushError};
+use core::fmt;
+use core::future::Future;
+use core::marker::PhantomPinned;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::task::{Context, Poll};
+
+use alloc::sync::Arc;
+
+use concurrent_queue::{ConcurrentQueue, ForcePushError, PopError, PushError};
 use event_listener::{Event, EventListener};
+use event_listener_strategy::{easy_wrapper, EventListenerFuture, Strategy};
+use futures_core::ready;
 use futures_core::stream::Stream;
+use pin_project_lite::pin_project;
 
 struct Channel<T> {
     /// Inner message queue.
@@ -104,6 +116,7 @@ impl<T> Channel<T> {
 /// assert_eq!(r.recv().await, Ok(10));
 /// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
 /// # });
+/// ```
 pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
     assert!(cap > 0, "capacity cannot be zero");
 
@@ -120,8 +133,9 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
         channel: channel.clone(),
     };
     let r = Receiver {
-        channel,
         listener: None,
+        channel,
+        _pin: PhantomPinned,
     };
     (s, r)
 }
@@ -145,6 +159,7 @@ pub fn bounded<T>(cap: usize) -> (Sender<T>, Receiver<T>) {
 /// assert_eq!(r.recv().await, Ok(20));
 /// assert_eq!(r.try_recv(), Err(TryRecvError::Empty));
 /// # });
+/// ```
 pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
     let channel = Arc::new(Channel {
         queue: ConcurrentQueue::unbounded(),
@@ -159,8 +174,9 @@ pub fn unbounded<T>() -> (Sender<T>, Receiver<T>) {
         channel: channel.clone(),
     };
     let r = Receiver {
-        channel,
         listener: None,
+        channel,
+        _pin: PhantomPinned,
     };
     (s, r)
 }
@@ -197,10 +213,9 @@ impl<T> Sender<T> {
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         match self.channel.queue.push(msg) {
             Ok(()) => {
-                // Notify a single blocked receive operation. If the notified operation then
-                // receives a message or gets canceled, it will notify another blocked receive
-                // operation.
-                self.channel.recv_ops.notify(1);
+                // Notify a blocked receive operation. If the notified operation gets canceled,
+                // it will notify another blocked receive operation.
+                self.channel.recv_ops.notify_additional(1);
 
                 // Notify all blocked streams.
                 self.channel.stream_ops.notify(usize::MAX);
@@ -232,10 +247,82 @@ impl<T> Sender<T> {
     /// # });
     /// ```
     pub fn send(&self, msg: T) -> Send<'_, T> {
-        Send {
+        Send::_new(SendInner {
             sender: self,
-            listener: None,
             msg: Some(msg),
+            listener: None,
+            _pin: PhantomPinned,
+        })
+    }
+
+    /// Sends a message into this channel using the blocking strategy.
+    ///
+    /// If the channel is full, this method will block until there is room.
+    /// If the channel is closed, this method returns an error.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`send`](Self::send) method,
+    /// this method will block the current thread until the message is sent.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended
+    /// to be used such that a channel can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in deadlocks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_channel::{unbounded, SendError};
+    ///
+    /// let (s, r) = unbounded();
+    ///
+    /// assert_eq!(s.send_blocking(1), Ok(()));
+    /// drop(r);
+    /// assert_eq!(s.send_blocking(2), Err(SendError(2)));
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
+        self.send(msg).wait()
+    }
+
+    /// Forcefully push a message into this channel.
+    ///
+    /// If the channel is full, this method will replace an existing message in the
+    /// channel and return it as `Ok(Some(value))`. If the channel is closed, this
+    /// method will return an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # futures_lite::future::block_on(async {
+    /// use async_channel::{bounded, SendError};
+    ///
+    /// let (s, r) = bounded(3);
+    ///
+    /// assert_eq!(s.send(1).await, Ok(()));
+    /// assert_eq!(s.send(2).await, Ok(()));
+    /// assert_eq!(s.force_send(3), Ok(None));
+    /// assert_eq!(s.force_send(4), Ok(Some(1)));
+    ///
+    /// assert_eq!(r.recv().await, Ok(2));
+    /// assert_eq!(r.recv().await, Ok(3));
+    /// assert_eq!(r.recv().await, Ok(4));
+    /// # });
+    /// ```
+    pub fn force_send(&self, msg: T) -> Result<Option<T>, SendError<T>> {
+        match self.channel.queue.force_push(msg) {
+            Ok(backlog) => {
+                // Notify a blocked receive operation. If the notified operation gets canceled,
+                // it will notify another blocked receive operation.
+                self.channel.recv_ops.notify_additional(1);
+
+                // Notify all blocked streams.
+                self.channel.stream_ops.notify(usize::MAX);
+
+                Ok(backlog)
+            }
+
+            Err(ForcePushError(reject)) => Err(SendError(reject)),
         }
     }
 
@@ -396,6 +483,13 @@ impl<T> Sender<T> {
     pub fn sender_count(&self) -> usize {
         self.channel.sender_count.load(Ordering::SeqCst)
     }
+
+    /// Downgrade the sender to a weak reference.
+    pub fn downgrade(&self) -> WeakSender<T> {
+        WeakSender {
+            channel: self.channel.clone(),
+        }
+    }
 }
 
 impl<T> Drop for Sender<T> {
@@ -419,7 +513,7 @@ impl<T> Clone for Sender<T> {
 
         // Make sure the count never overflows, even if lots of sender clones are leaked.
         if count > usize::MAX / 2 {
-            process::abort();
+            abort();
         }
 
         Sender {
@@ -428,26 +522,43 @@ impl<T> Clone for Sender<T> {
     }
 }
 
-/// The receiving side of a channel.
-///
-/// Receivers can be cloned and shared among threads. When all receivers associated with a channel
-/// are dropped, the channel becomes closed.
-///
-/// The channel can also be closed manually by calling [`Receiver::close()`].
-///
-/// Receivers implement the [`Stream`] trait.
-pub struct Receiver<T> {
-    /// Inner channel state.
-    channel: Arc<Channel<T>>,
+pin_project! {
+    /// The receiving side of a channel.
+    ///
+    /// Receivers can be cloned and shared among threads. When all receivers associated with a channel
+    /// are dropped, the channel becomes closed.
+    ///
+    /// The channel can also be closed manually by calling [`Receiver::close()`].
+    ///
+    /// Receivers implement the [`Stream`] trait.
+    pub struct Receiver<T> {
+        // Inner channel state.
+        channel: Arc<Channel<T>>,
 
-    /// Listens for a send or close event to unblock this stream.
-    listener: Option<EventListener>,
+        // Listens for a send or close event to unblock this stream.
+        listener: Option<EventListener>,
+
+        // Keeping this type `!Unpin` enables future optimizations.
+        #[pin]
+        _pin: PhantomPinned
+    }
+
+    impl<T> PinnedDrop for Receiver<T> {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+
+            // Decrement the receiver count and close the channel if it drops down to zero.
+            if this.channel.receiver_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+                this.channel.close();
+            }
+        }
+    }
 }
 
 impl<T> Receiver<T> {
     /// Attempts to receive a message from the channel.
     ///
-    /// If the channel is empty or closed, this method returns an error.
+    /// If the channel is empty, or empty and closed, this method returns an error.
     ///
     /// # Examples
     ///
@@ -468,9 +579,9 @@ impl<T> Receiver<T> {
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         match self.channel.queue.pop() {
             Ok(msg) => {
-                // Notify a single blocked send operation. If the notified operation then sends a
-                // message or gets canceled, it will notify another blocked send operation.
-                self.channel.send_ops.notify(1);
+                // Notify a blocked send operation. If the notified operation gets canceled, it
+                // will notify another blocked send operation.
+                self.channel.send_ops.notify_additional(1);
 
                 Ok(msg)
             }
@@ -502,10 +613,44 @@ impl<T> Receiver<T> {
     /// # });
     /// ```
     pub fn recv(&self) -> Recv<'_, T> {
-        Recv {
+        Recv::_new(RecvInner {
             receiver: self,
             listener: None,
-        }
+            _pin: PhantomPinned,
+        })
+    }
+
+    /// Receives a message from the channel using the blocking strategy.
+    ///
+    /// If the channel is empty, this method waits until there is a message.
+    /// If the channel is closed, this method receives a message or returns an error if there are
+    /// no more messages.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`recv`](Self::recv) method,
+    /// this method will block the current thread until the message is sent.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended
+    /// to be used such that a channel can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in deadlocks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_channel::{unbounded, RecvError};
+    ///
+    /// let (s, r) = unbounded();
+    ///
+    /// assert_eq!(s.send_blocking(1), Ok(()));
+    /// drop(s);
+    ///
+    /// assert_eq!(r.recv_blocking(), Ok(1));
+    /// assert_eq!(r.recv_blocking(), Err(RecvError));
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub fn recv_blocking(&self) -> Result<T, RecvError> {
+        self.recv().wait()
     }
 
     /// Closes the channel.
@@ -665,13 +810,11 @@ impl<T> Receiver<T> {
     pub fn sender_count(&self) -> usize {
         self.channel.sender_count.load(Ordering::SeqCst)
     }
-}
 
-impl<T> Drop for Receiver<T> {
-    fn drop(&mut self) {
-        // Decrement the receiver count and close the channel if it drops down to zero.
-        if self.channel.receiver_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-            self.channel.close();
+    /// Downgrade the receiver to a weak reference.
+    pub fn downgrade(&self) -> WeakReceiver<T> {
+        WeakReceiver {
+            channel: self.channel.clone(),
         }
     }
 }
@@ -688,12 +831,13 @@ impl<T> Clone for Receiver<T> {
 
         // Make sure the count never overflows, even if lots of receiver clones are leaked.
         if count > usize::MAX / 2 {
-            process::abort();
+            abort();
         }
 
         Receiver {
             channel: self.channel.clone(),
             listener: None,
+            _pin: PhantomPinned,
         }
     }
 }
@@ -704,9 +848,12 @@ impl<T> Stream for Receiver<T> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             // If this stream is listening for events, first wait for a notification.
-            if let Some(listener) = self.listener.as_mut() {
-                futures_core::ready!(Pin::new(listener).poll(cx));
-                self.listener = None;
+            {
+                let this = self.as_mut().project();
+                if let Some(listener) = this.listener.as_mut() {
+                    ready!(Pin::new(listener).poll(cx));
+                    *this.listener = None;
+                }
             }
 
             loop {
@@ -714,27 +861,26 @@ impl<T> Stream for Receiver<T> {
                 match self.try_recv() {
                     Ok(msg) => {
                         // The stream is not blocked on an event - drop the listener.
-                        self.listener = None;
+                        let this = self.as_mut().project();
+                        *this.listener = None;
                         return Poll::Ready(Some(msg));
                     }
                     Err(TryRecvError::Closed) => {
                         // The stream is not blocked on an event - drop the listener.
-                        self.listener = None;
+                        let this = self.as_mut().project();
+                        *this.listener = None;
                         return Poll::Ready(None);
                     }
                     Err(TryRecvError::Empty) => {}
                 }
 
                 // Receiving failed - now start listening for notifications or wait for one.
-                match self.listener.as_mut() {
-                    None => {
-                        // Create a listener and try sending the message again.
-                        self.listener = Some(self.channel.stream_ops.listen());
-                    }
-                    Some(_) => {
-                        // Go back to the outer loop to poll the listener.
-                        break;
-                    }
+                let this = self.as_mut().project();
+                if this.listener.is_some() {
+                    // Go back to the outer loop to wait for a notification.
+                    break;
+                } else {
+                    *this.listener = Some(this.channel.stream_ops.listen());
                 }
             }
         }
@@ -744,6 +890,100 @@ impl<T> Stream for Receiver<T> {
 impl<T> futures_core::stream::FusedStream for Receiver<T> {
     fn is_terminated(&self) -> bool {
         self.channel.queue.is_closed() && self.channel.queue.is_empty()
+    }
+}
+
+/// A [`Sender`] that prevents the channel from not being closed.
+///
+/// This is created through the [`Sender::downgrade`] method. In order to use it, it needs
+/// to be upgraded into a [`Sender`] through the `upgrade` method.
+pub struct WeakSender<T> {
+    channel: Arc<Channel<T>>,
+}
+
+impl<T> WeakSender<T> {
+    /// Upgrade the [`WeakSender`] into a [`Sender`].
+    pub fn upgrade(&self) -> Option<Sender<T>> {
+        if self.channel.queue.is_closed() {
+            None
+        } else {
+            match self.channel.sender_count.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |count| if count == 0 { None } else { Some(count + 1) },
+            ) {
+                Err(_) => None,
+                Ok(new_value) if new_value > usize::MAX / 2 => {
+                    // Make sure the count never overflows, even if lots of sender clones are leaked.
+                    abort();
+                }
+                Ok(_) => Some(Sender {
+                    channel: self.channel.clone(),
+                }),
+            }
+        }
+    }
+}
+
+impl<T> Clone for WeakSender<T> {
+    fn clone(&self) -> Self {
+        WeakSender {
+            channel: self.channel.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for WeakSender<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WeakSender {{ .. }}")
+    }
+}
+
+/// A [`Receiver`] that prevents the channel from not being closed.
+///
+/// This is created through the [`Receiver::downgrade`] method. In order to use it, it needs
+/// to be upgraded into a [`Receiver`] through the `upgrade` method.
+pub struct WeakReceiver<T> {
+    channel: Arc<Channel<T>>,
+}
+
+impl<T> WeakReceiver<T> {
+    /// Upgrade the [`WeakReceiver`] into a [`Receiver`].
+    pub fn upgrade(&self) -> Option<Receiver<T>> {
+        if self.channel.queue.is_closed() {
+            None
+        } else {
+            match self.channel.receiver_count.fetch_update(
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                |count| if count == 0 { None } else { Some(count + 1) },
+            ) {
+                Err(_) => None,
+                Ok(new_value) if new_value > usize::MAX / 2 => {
+                    // Make sure the count never overflows, even if lots of receiver clones are leaked.
+                    abort();
+                }
+                Ok(_) => Some(Receiver {
+                    channel: self.channel.clone(),
+                    listener: None,
+                    _pin: PhantomPinned,
+                }),
+            }
+        }
+    }
+}
+
+impl<T> Clone for WeakReceiver<T> {
+    fn clone(&self) -> Self {
+        WeakReceiver {
+            channel: self.channel.clone(),
+        }
+    }
+}
+
+impl<T> fmt::Debug for WeakReceiver<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WeakReceiver {{ .. }}")
     }
 }
 
@@ -760,7 +1000,8 @@ impl<T> SendError<T> {
     }
 }
 
-impl<T> error::Error for SendError<T> {}
+#[cfg(feature = "std")]
+impl<T> std::error::Error for SendError<T> {}
 
 impl<T> fmt::Debug for SendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -810,7 +1051,8 @@ impl<T> TrySendError<T> {
     }
 }
 
-impl<T> error::Error for TrySendError<T> {}
+#[cfg(feature = "std")]
+impl<T> std::error::Error for TrySendError<T> {}
 
 impl<T> fmt::Debug for TrySendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -836,7 +1078,8 @@ impl<T> fmt::Display for TrySendError<T> {
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct RecvError;
 
-impl error::Error for RecvError {}
+#[cfg(feature = "std")]
+impl std::error::Error for RecvError {}
 
 impl fmt::Display for RecvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -872,7 +1115,8 @@ impl TryRecvError {
     }
 }
 
-impl error::Error for TryRecvError {}
+#[cfg(feature = "std")]
+impl std::error::Error for TryRecvError {}
 
 impl fmt::Display for TryRecvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -883,112 +1127,133 @@ impl fmt::Display for TryRecvError {
     }
 }
 
-/// A future returned by [`Sender::send()`].
-#[derive(Debug)]
-#[must_use = "futures do nothing unless .awaited"]
-pub struct Send<'a, T> {
-    sender: &'a Sender<T>,
-    listener: Option<EventListener>,
-    msg: Option<T>,
+easy_wrapper! {
+    /// A future returned by [`Sender::send()`].
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub struct Send<'a, T>(SendInner<'a, T> => Result<(), SendError<T>>);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
 }
 
-impl<'a, T> Unpin for Send<'a, T> {}
+pin_project! {
+    #[derive(Debug)]
+    #[project(!Unpin)]
+    struct SendInner<'a, T> {
+        // Reference to the original sender.
+        sender: &'a Sender<T>,
 
-impl<'a, T> Future for Send<'a, T> {
+        // The message to send.
+        msg: Option<T>,
+
+        // Listener waiting on the channel.
+        listener: Option<EventListener>,
+
+        // Keeping this type `!Unpin` enables future optimizations.
+        #[pin]
+        _pin: PhantomPinned
+    }
+}
+
+impl<'a, T> EventListenerFuture for SendInner<'a, T> {
     type Output = Result<(), SendError<T>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = Pin::new(self);
+    /// Run this future with the given `Strategy`.
+    fn poll_with_strategy<'x, S: Strategy<'x>>(
+        self: Pin<&mut Self>,
+        strategy: &mut S,
+        context: &mut S::Context,
+    ) -> Poll<Result<(), SendError<T>>> {
+        let this = self.project();
 
         loop {
             let msg = this.msg.take().unwrap();
             // Attempt to send a message.
             match this.sender.try_send(msg) {
-                Ok(()) => {
-                    // If the capacity is larger than 1, notify another blocked send operation.
-                    match this.sender.channel.queue.capacity() {
-                        Some(1) => {}
-                        Some(_) | None => this.sender.channel.send_ops.notify(1),
-                    }
-                    return Poll::Ready(Ok(()));
-                }
+                Ok(()) => return Poll::Ready(Ok(())),
                 Err(TrySendError::Closed(msg)) => return Poll::Ready(Err(SendError(msg))),
-                Err(TrySendError::Full(m)) => this.msg = Some(m),
+                Err(TrySendError::Full(m)) => *this.msg = Some(m),
             }
 
             // Sending failed - now start listening for notifications or wait for one.
-            match &mut this.listener {
-                None => {
-                    // Start listening and then try receiving again.
-                    this.listener = Some(this.sender.channel.send_ops.listen());
-                }
-                Some(l) => {
-                    // Wait for a notification.
-                    match Pin::new(l).poll(cx) {
-                        Poll::Ready(_) => {
-                            this.listener = None;
-                            continue;
-                        }
-
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
+            if this.listener.is_some() {
+                // Poll using the given strategy
+                ready!(S::poll(strategy, &mut *this.listener, context));
+            } else {
+                *this.listener = Some(this.sender.channel.send_ops.listen());
             }
         }
     }
 }
 
-/// A future returned by [`Receiver::recv()`].
-#[derive(Debug)]
-#[must_use = "futures do nothing unless .awaited"]
-pub struct Recv<'a, T> {
-    receiver: &'a Receiver<T>,
-    listener: Option<EventListener>,
+easy_wrapper! {
+    /// A future returned by [`Receiver::recv()`].
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub struct Recv<'a, T>(RecvInner<'a, T> => Result<T, RecvError>);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
 }
 
-impl<'a, T> Unpin for Recv<'a, T> {}
+pin_project! {
+    #[derive(Debug)]
+    #[project(!Unpin)]
+    struct RecvInner<'a, T> {
+        // Reference to the receiver.
+        receiver: &'a Receiver<T>,
 
-impl<'a, T> Future for Recv<'a, T> {
+        // Listener waiting on the channel.
+        listener: Option<EventListener>,
+
+        // Keeping this type `!Unpin` enables future optimizations.
+        #[pin]
+        _pin: PhantomPinned
+    }
+}
+
+impl<'a, T> EventListenerFuture for RecvInner<'a, T> {
     type Output = Result<T, RecvError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = Pin::new(self);
+    /// Run this future with the given `Strategy`.
+    fn poll_with_strategy<'x, S: Strategy<'x>>(
+        self: Pin<&mut Self>,
+        strategy: &mut S,
+        cx: &mut S::Context,
+    ) -> Poll<Result<T, RecvError>> {
+        let this = self.project();
 
         loop {
             // Attempt to receive a message.
             match this.receiver.try_recv() {
-                Ok(msg) => {
-                    // If the capacity is larger than 1, notify another blocked receive operation.
-                    // There is no need to notify stream operations because all of them get
-                    // notified every time a message is sent into the channel.
-                    match this.receiver.channel.queue.capacity() {
-                        Some(1) => {}
-                        Some(_) | None => this.receiver.channel.recv_ops.notify(1),
-                    }
-                    return Poll::Ready(Ok(msg));
-                }
+                Ok(msg) => return Poll::Ready(Ok(msg)),
                 Err(TryRecvError::Closed) => return Poll::Ready(Err(RecvError)),
                 Err(TryRecvError::Empty) => {}
             }
 
             // Receiving failed - now start listening for notifications or wait for one.
-            match &mut this.listener {
-                None => {
-                    // Start listening and then try receiving again.
-                    this.listener = Some(this.receiver.channel.recv_ops.listen());
-                }
-                Some(l) => {
-                    // Wait for a notification.
-                    match Pin::new(l).poll(cx) {
-                        Poll::Ready(_) => {
-                            this.listener = None;
-                            continue;
-                        }
-
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
+            if this.listener.is_some() {
+                // Poll using the given strategy
+                ready!(S::poll(strategy, &mut *this.listener, cx));
+            } else {
+                *this.listener = Some(this.receiver.channel.recv_ops.listen());
             }
         }
     }
+}
+
+#[cfg(feature = "std")]
+use std::process::abort;
+
+#[cfg(not(feature = "std"))]
+fn abort() -> ! {
+    struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("Panic while panicking to abort");
+        }
+    }
+
+    let _bomb = PanicOnDrop;
+    panic!("Panic while panicking to abort")
 }

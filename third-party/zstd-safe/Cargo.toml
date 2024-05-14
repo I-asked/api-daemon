@@ -11,35 +11,56 @@
 
 [package]
 edition = "2018"
+rust-version = "1.64"
 name = "zstd-safe"
-version = "4.1.4+zstd.1.5.2"
+version = "7.1.0"
 authors = ["Alexandre Bury <alexandre.bury@gmail.com>"]
 build = "build.rs"
+exclude = ["update_consts.sh"]
 description = "Safe low-level bindings for the zstd compression library."
 readme = "Readme.md"
-keywords = ["zstd", "zstandard", "compression"]
-categories = ["api-bindings", "compression"]
+keywords = [
+    "zstd",
+    "zstandard",
+    "compression",
+]
+categories = [
+    "api-bindings",
+    "compression",
+]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/gyscos/zstd-rs"
+
 [package.metadata.docs.rs]
-features = ["experimental", "arrays", "std", "doc-cfg"]
-[dependencies.libc]
-version = "0.2.21"
+features = [
+    "experimental",
+    "arrays",
+    "std",
+    "zdict_builder",
+    "doc-cfg",
+]
 
 [dependencies.zstd-sys]
-version = "=1.6.3"
+version = "2.0.10"
 default-features = false
 
 [features]
 arrays = []
 bindgen = ["zstd-sys/bindgen"]
 debug = ["zstd-sys/debug"]
-default = ["legacy", "arrays"]
+default = [
+    "legacy",
+    "arrays",
+    "zdict_builder",
+]
 doc-cfg = []
 experimental = ["zstd-sys/experimental"]
+fat-lto = ["zstd-sys/fat-lto"]
 legacy = ["zstd-sys/legacy"]
 no_asm = ["zstd-sys/no_asm"]
 pkg-config = ["zstd-sys/pkg-config"]
 std = ["zstd-sys/std"]
 thin = ["zstd-sys/thin"]
+thin-lto = ["zstd-sys/thin-lto"]
+zdict_builder = ["zstd-sys/zdict_builder"]
 zstdmt = ["zstd-sys/zstdmt"]

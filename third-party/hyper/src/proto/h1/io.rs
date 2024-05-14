@@ -1,22 +1,23 @@
 use std::cmp;
 use std::fmt;
+#[cfg(all(feature = "server", feature = "runtime"))]
+use std::future::Future;
 use std::io::{self, IoSlice};
 use std::marker::Unpin;
 use std::mem::MaybeUninit;
-#[cfg(all(feature = "server", feature = "runtime"))]
-use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 #[cfg(all(feature = "server", feature = "runtime"))]
 use std::time::Duration;
 
-#[cfg(all(feature = "server", feature = "runtime"))]
-use tokio::time::Instant;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+#[cfg(all(feature = "server", feature = "runtime"))]
+use tokio::time::Instant;
 use tracing::{debug, trace};
 
 use super::{Http1Transaction, ParseContext, ParsedMessage};
 use crate::common::buf::BufList;
-use crate::common::{task, Pin, Poll};
 
 /// The initial buffer size allocated before trying to read from IO.
 pub(crate) const INIT_BUFFER_SIZE: usize = 8192;
@@ -174,7 +175,7 @@ where
 
     pub(super) fn parse<S>(
         &mut self,
-        cx: &mut task::Context<'_>,
+        cx: &mut Context<'_>,
         parse_ctx: ParseContext<'_>,
     ) -> Poll<crate::Result<ParsedMessage<S::Incoming>>>
     where
@@ -194,6 +195,8 @@ where
                     #[cfg(all(feature = "server", feature = "runtime"))]
                     h1_header_read_timeout_running: parse_ctx.h1_header_read_timeout_running,
                     preserve_header_case: parse_ctx.preserve_header_case,
+                    #[cfg(feature = "ffi")]
+                    preserve_header_order: parse_ctx.preserve_header_order,
                     h09_responses: parse_ctx.h09_responses,
                     #[cfg(feature = "ffi")]
                     on_informational: parse_ctx.on_informational,
@@ -208,9 +211,13 @@ where
                     {
                         *parse_ctx.h1_header_read_timeout_running = false;
 
-                        if let Some(h1_header_read_timeout_fut) = parse_ctx.h1_header_read_timeout_fut {
+                        if let Some(h1_header_read_timeout_fut) =
+                            parse_ctx.h1_header_read_timeout_fut
+                        {
                             // Reset the timer in order to avoid woken up when the timeout finishes
-                            h1_header_read_timeout_fut.as_mut().reset(Instant::now() + Duration::from_secs(30 * 24 * 60 * 60));
+                            h1_header_read_timeout_fut
+                                .as_mut()
+                                .reset(Instant::now() + Duration::from_secs(30 * 24 * 60 * 60));
                         }
                     }
                     return Poll::Ready(Ok(msg));
@@ -224,12 +231,14 @@ where
 
                     #[cfg(all(feature = "server", feature = "runtime"))]
                     if *parse_ctx.h1_header_read_timeout_running {
-                        if let Some(h1_header_read_timeout_fut) = parse_ctx.h1_header_read_timeout_fut {
-                            if Pin::new( h1_header_read_timeout_fut).poll(cx).is_ready() {
+                        if let Some(h1_header_read_timeout_fut) =
+                            parse_ctx.h1_header_read_timeout_fut
+                        {
+                            if Pin::new(h1_header_read_timeout_fut).poll(cx).is_ready() {
                                 *parse_ctx.h1_header_read_timeout_running = false;
 
                                 tracing::warn!("read header from client timeout");
-                                return Poll::Ready(Err(crate::Error::new_header_timeout()))
+                                return Poll::Ready(Err(crate::Error::new_header_timeout()));
                             }
                         }
                     }
@@ -242,10 +251,7 @@ where
         }
     }
 
-    pub(crate) fn poll_read_from_io(
-        &mut self,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<io::Result<usize>> {
+    pub(crate) fn poll_read_from_io(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
         self.read_blocked = false;
         let next = self.read_buf_strategy.next();
         if self.read_buf_remaining_mut() < next {
@@ -288,7 +294,7 @@ where
         self.read_blocked
     }
 
-    pub(crate) fn poll_flush(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+    pub(crate) fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.flush_pipeline && !self.read_buf.is_empty() {
             Poll::Ready(Ok(()))
         } else if self.write_buf.remaining() == 0 {
@@ -328,7 +334,7 @@ where
     ///
     /// Since all buffered bytes are flattened into the single headers buffer,
     /// that skips some bookkeeping around using multiple buffers.
-    fn poll_flush_flattened(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush_flattened(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         loop {
             let n = ready!(Pin::new(&mut self.io).poll_write(cx, self.write_buf.headers.chunk()))?;
             debug!("flushed {} bytes", n);
@@ -358,7 +364,7 @@ impl<T: Unpin, B> Unpin for Buffered<T, B> {}
 
 // TODO: This trait is old... at least rename to PollBytes or something...
 pub(crate) trait MemRead {
-    fn read_mem(&mut self, cx: &mut task::Context<'_>, len: usize) -> Poll<io::Result<Bytes>>;
+    fn read_mem(&mut self, cx: &mut Context<'_>, len: usize) -> Poll<io::Result<Bytes>>;
 }
 
 impl<T, B> MemRead for Buffered<T, B>
@@ -366,7 +372,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
     B: Buf,
 {
-    fn read_mem(&mut self, cx: &mut task::Context<'_>, len: usize) -> Poll<io::Result<Bytes>> {
+    fn read_mem(&mut self, cx: &mut Context<'_>, len: usize) -> Poll<io::Result<Bytes>> {
         if !self.read_buf.is_empty() {
             let n = std::cmp::min(len, self.read_buf.len());
             Poll::Ready(Ok(self.read_buf.split_to(n).freeze()))
@@ -727,10 +733,15 @@ mod tests {
                 cached_headers: &mut None,
                 req_method: &mut None,
                 h1_parser_config: Default::default(),
+                #[cfg(feature = "runtime")]
                 h1_header_read_timeout: None,
+                #[cfg(feature = "runtime")]
                 h1_header_read_timeout_fut: &mut None,
+                #[cfg(feature = "runtime")]
                 h1_header_read_timeout_running: &mut false,
                 preserve_header_case: false,
+                #[cfg(feature = "ffi")]
+                preserve_header_order: false,
                 h09_responses: false,
                 #[cfg(feature = "ffi")]
                 on_informational: &mut None,
@@ -894,9 +905,7 @@ mod tests {
     async fn write_buf_flatten() {
         let _ = pretty_env_logger::try_init();
 
-        let mock = Mock::new()
-            .write(b"hello world, it's hyper!")
-            .build();
+        let mock = Mock::new().write(b"hello world, it's hyper!").build();
 
         let mut buffered = Buffered::<_, Cursor<Vec<u8>>>::new(mock);
         buffered.write_buf.set_strategy(WriteStrategy::Flatten);

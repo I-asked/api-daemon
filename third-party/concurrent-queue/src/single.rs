@@ -1,9 +1,11 @@
-use std::cell::UnsafeCell;
-use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
+use core::mem::MaybeUninit;
+use core::ptr;
 
-use crate::{PopError, PushError};
+use crate::sync::atomic::{AtomicUsize, Ordering};
+use crate::sync::cell::UnsafeCell;
+#[allow(unused_imports)]
+use crate::sync::prelude::*;
+use crate::{busy_wait, ForcePushError, PopError, PushError};
 
 const LOCKED: usize = 1 << 0;
 const PUSHED: usize = 1 << 1;
@@ -29,11 +31,14 @@ impl<T> Single<T> {
         // Lock and fill the slot.
         let state = self
             .state
-            .compare_and_swap(0, LOCKED | PUSHED, Ordering::SeqCst);
+            .compare_exchange(0, LOCKED | PUSHED, Ordering::SeqCst, Ordering::SeqCst)
+            .unwrap_or_else(|x| x);
 
         if state == 0 {
             // Write the value and unlock.
-            unsafe { self.slot.get().write(MaybeUninit::new(value)) }
+            self.slot.with_mut(|slot| unsafe {
+                slot.write(MaybeUninit::new(value));
+            });
             self.state.fetch_and(!LOCKED, Ordering::Release);
             Ok(())
         } else if state & CLOSED != 0 {
@@ -43,18 +48,79 @@ impl<T> Single<T> {
         }
     }
 
+    /// Attempts to push an item into the queue, displacing another if necessary.
+    pub fn force_push(&self, value: T) -> Result<Option<T>, ForcePushError<T>> {
+        // Attempt to lock the slot.
+        let mut state = 0;
+
+        loop {
+            // Lock the slot.
+            let prev = self
+                .state
+                .compare_exchange(state, LOCKED | PUSHED, Ordering::SeqCst, Ordering::SeqCst)
+                .unwrap_or_else(|x| x);
+
+            if prev & CLOSED != 0 {
+                return Err(ForcePushError(value));
+            }
+
+            if prev == state {
+                // If the value was pushed, swap out the value.
+                let prev_value = if prev & PUSHED == 0 {
+                    // SAFETY: write is safe because we have locked the state.
+                    self.slot.with_mut(|slot| unsafe {
+                        slot.write(MaybeUninit::new(value));
+                    });
+                    None
+                } else {
+                    // SAFETY: replace is safe because we have locked the state, and
+                    // assume_init is safe because we have checked that the value was pushed.
+                    let prev_value = unsafe {
+                        self.slot.with_mut(move |slot| {
+                            ptr::replace(slot, MaybeUninit::new(value)).assume_init()
+                        })
+                    };
+                    Some(prev_value)
+                };
+
+                // We can unlock the slot now.
+                self.state.fetch_and(!LOCKED, Ordering::Release);
+
+                // Return the old value.
+                return Ok(prev_value);
+            }
+
+            // Try to go for the current (pushed) state.
+            if prev & LOCKED == 0 {
+                state = prev;
+            } else {
+                // State is locked.
+                busy_wait();
+                state = prev & !LOCKED;
+            }
+        }
+    }
+
     /// Attempts to pop an item from the queue.
     pub fn pop(&self) -> Result<T, PopError> {
         let mut state = PUSHED;
         loop {
             // Lock and empty the slot.
-            let prev =
-                self.state
-                    .compare_and_swap(state, (state | LOCKED) & !PUSHED, Ordering::SeqCst);
+            let prev = self
+                .state
+                .compare_exchange(
+                    state,
+                    (state | LOCKED) & !PUSHED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                )
+                .unwrap_or_else(|x| x);
 
             if prev == state {
                 // Read the value and unlock.
-                let value = unsafe { self.slot.get().read().assume_init() };
+                let value = self
+                    .slot
+                    .with_mut(|slot| unsafe { slot.read().assume_init() });
                 self.state.fetch_and(!LOCKED, Ordering::Release);
                 return Ok(value);
             }
@@ -70,7 +136,7 @@ impl<T> Single<T> {
             if prev & LOCKED == 0 {
                 state = prev;
             } else {
-                thread::yield_now();
+                busy_wait();
                 state = prev & !LOCKED;
             }
         }
@@ -78,11 +144,7 @@ impl<T> Single<T> {
 
     /// Returns the number of items in the queue.
     pub fn len(&self) -> usize {
-        if self.state.load(Ordering::SeqCst) & PUSHED == 0 {
-            0
-        } else {
-            1
-        }
+        usize::from(self.state.load(Ordering::SeqCst) & PUSHED != 0)
     }
 
     /// Returns `true` if the queue is empty.
@@ -112,9 +174,14 @@ impl<T> Single<T> {
 impl<T> Drop for Single<T> {
     fn drop(&mut self) {
         // Drop the value in the slot.
-        if *self.state.get_mut() & PUSHED != 0 {
-            let value = unsafe { self.slot.get().read().assume_init() };
-            drop(value);
-        }
+        let Self { state, slot } = self;
+        state.with_mut(|state| {
+            if *state & PUSHED != 0 {
+                slot.with_mut(|slot| unsafe {
+                    let value = &mut *slot;
+                    value.as_mut_ptr().drop_in_place();
+                });
+            }
+        });
     }
 }

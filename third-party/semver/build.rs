@@ -3,15 +3,24 @@ use std::process::Command;
 use std::str;
 
 fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+
     let compiler = match rustc_minor_version() {
         Some(compiler) => compiler,
         None => return,
     };
 
-    if compiler < 32 {
-        // u64::from_ne_bytes.
-        // https://doc.rust-lang.org/std/primitive.u64.html#method.from_ne_bytes
-        println!("cargo:rustc-cfg=no_from_ne_bytes");
+    if compiler >= 80 {
+        println!("cargo:rustc-check-cfg=cfg(doc_cfg)");
+        println!("cargo:rustc-check-cfg=cfg(no_alloc_crate)");
+        println!("cargo:rustc-check-cfg=cfg(no_const_vec_new)");
+        println!("cargo:rustc-check-cfg=cfg(no_exhaustive_int_match)");
+        println!("cargo:rustc-check-cfg=cfg(no_non_exhaustive)");
+        println!("cargo:rustc-check-cfg=cfg(no_nonzero_bitscan)");
+        println!("cargo:rustc-check-cfg=cfg(no_str_strip_prefix)");
+        println!("cargo:rustc-check-cfg=cfg(no_track_caller)");
+        println!("cargo:rustc-check-cfg=cfg(no_unsafe_op_in_unsafe_fn_lint)");
+        println!("cargo:rustc-check-cfg=cfg(test_node_semver)");
     }
 
     if compiler < 33 {
@@ -41,7 +50,7 @@ fn main() {
 
     if compiler < 45 {
         // String::strip_prefix.
-        // https://doc.rust-lang.org/std/primitive.str.html#method.repeat
+        // https://doc.rust-lang.org/std/primitive.str.html#method.strip_prefix
         println!("cargo:rustc-cfg=no_str_strip_prefix");
     }
 

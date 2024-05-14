@@ -1,8 +1,16 @@
 # rust-brotli
 
-[![crates.io](http://meritbadge.herokuapp.com/brotli)](https://crates.io/crates/brotli)
+[![crates.io](https://img.shields.io/crates/v/brotli.svg)](https://crates.io/crates/brotli)
 [![Build Status](https://travis-ci.org/dropbox/rust-brotli.svg?branch=master)](https://travis-ci.org/dropbox/rust-brotli)
 
+## What's new in 3.5
+Updated SIMD support.
+Better CI integration.
+Cleaned up some of the clippy warnings.
+
+## What's new in 3.4
+Brotli decompressor's reader and writer has better behavior when operating upon brotli streams with extra bits at the end.
+Optional features like stdsimd are now tested or disabled for now.
 
 ## What's new in 3.2
 * into_inner conversions for both Reader and Writer classes
@@ -156,7 +164,7 @@ This example illustrates a mechanism to avoid subsequent syscalls after the init
 
 ## Using the C interface
 
-rust-brotli is a drop-in replacement for the official http://github.com/google/brotli/ C
+rust-brotli is a drop-in replacement for the official https://github.com/google/brotli C
 implementation. That means you can use it from any place that supports that library.
 To build rust-brotli in this manner enter the c subdirectory and run make there
 

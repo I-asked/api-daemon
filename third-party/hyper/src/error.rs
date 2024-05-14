@@ -1,4 +1,7 @@
 //! Error and Result module.
+
+#[cfg(all(feature = "client", any(feature = "http1", feature = "http2")))]
+use crate::client::connect::Connected;
 use std::error::Error as StdError;
 use std::fmt;
 
@@ -15,6 +18,8 @@ pub struct Error {
 struct ErrorImpl {
     kind: Kind,
     cause: Option<Cause>,
+    #[cfg(all(feature = "client", any(feature = "http1", feature = "http2")))]
+    connect_info: Option<Connected>,
 }
 
 #[derive(Debug)]
@@ -53,8 +58,6 @@ pub(super) enum Kind {
     /// Error while writing a body to connection.
     #[cfg(any(feature = "http1", feature = "http2"))]
     BodyWrite,
-    /// The body write was aborted.
-    BodyWriteAborted,
     /// Error calling AsyncWrite::shutdown()
     #[cfg(feature = "http1")]
     Shutdown,
@@ -96,6 +99,8 @@ pub(super) enum User {
     /// Error calling user's HttpBody::poll_data().
     #[cfg(any(feature = "http1", feature = "http2"))]
     Body,
+    /// The user aborted writing of the outgoing body.
+    BodyWriteAborted,
     /// Error calling user's MakeService.
     #[cfg(any(feature = "http1", feature = "http2"))]
     #[cfg(feature = "server")]
@@ -136,6 +141,10 @@ pub(super) enum User {
     /// User called `server::Connection::without_shutdown()` on an HTTP/2 conn.
     #[cfg(feature = "server")]
     WithoutShutdownNonHttp1,
+
+    /// The dispatch task is gone.
+    #[cfg(feature = "client")]
+    DispatchGone,
 
     /// User aborted in an FFI callback.
     #[cfg(feature = "ffi")]
@@ -193,7 +202,7 @@ impl Error {
 
     /// Returns true if the body write was aborted.
     pub fn is_body_write_aborted(&self) -> bool {
-        matches!(self.inner.kind, Kind::BodyWriteAborted)
+        matches!(self.inner.kind, Kind::User(User::BodyWriteAborted))
     }
 
     /// Returns true if the error was caused by a timeout.
@@ -206,14 +215,31 @@ impl Error {
         self.inner.cause
     }
 
+    /// Returns the info of the client connection on which this error occurred.
+    #[cfg(all(feature = "client", any(feature = "http1", feature = "http2")))]
+    pub fn client_connect_info(&self) -> Option<&Connected> {
+        self.inner.connect_info.as_ref()
+    }
+
     pub(super) fn new(kind: Kind) -> Error {
         Error {
-            inner: Box::new(ErrorImpl { kind, cause: None }),
+            inner: Box::new(ErrorImpl {
+                kind,
+                cause: None,
+                #[cfg(all(feature = "client", any(feature = "http1", feature = "http2")))]
+                connect_info: None,
+            }),
         }
     }
 
     pub(super) fn with<C: Into<Cause>>(mut self, cause: C) -> Error {
         self.inner.cause = Some(cause.into());
+        self
+    }
+
+    #[cfg(all(feature = "client", any(feature = "http1", feature = "http2")))]
+    pub(super) fn with_client_connect_info(mut self, connect_info: Connected) -> Error {
+        self.inner.connect_info = Some(connect_info);
         self
     }
 
@@ -305,7 +331,7 @@ impl Error {
     }
 
     pub(super) fn new_body_write_aborted() -> Error {
-        Error::new(Kind::BodyWriteAborted)
+        Error::new(Kind::User(User::BodyWriteAborted))
     }
 
     fn new_user(user: User) -> Error {
@@ -387,6 +413,11 @@ impl Error {
         Error::new_user(User::AbortedByCallback)
     }
 
+    #[cfg(feature = "client")]
+    pub(super) fn new_user_dispatch_gone() -> Error {
+        Error::new(Kind::User(User::DispatchGone))
+    }
+
     #[cfg(feature = "http2")]
     pub(super) fn new_h2(cause: ::h2::Error) -> Error {
         if cause.is_io() {
@@ -444,7 +475,6 @@ impl Error {
             Kind::Body => "error reading a body from connection",
             #[cfg(any(feature = "http1", feature = "http2"))]
             Kind::BodyWrite => "error writing a body to connection",
-            Kind::BodyWriteAborted => "body write aborted",
             #[cfg(feature = "http1")]
             Kind::Shutdown => "error shutting down connection",
             #[cfg(feature = "http2")]
@@ -454,6 +484,7 @@ impl Error {
 
             #[cfg(any(feature = "http1", feature = "http2"))]
             Kind::User(User::Body) => "error from user's HttpBody stream",
+            Kind::User(User::BodyWriteAborted) => "user body write aborted",
             #[cfg(any(feature = "http1", feature = "http2"))]
             #[cfg(feature = "server")]
             Kind::User(User::MakeService) => "error from user's MakeService",
@@ -483,6 +514,8 @@ impl Error {
             Kind::User(User::WithoutShutdownNonHttp1) => {
                 "without_shutdown() called on a non-HTTP/1 connection"
             }
+            #[cfg(feature = "client")]
+            Kind::User(User::DispatchGone) => "dispatch task is gone",
             #[cfg(feature = "ffi")]
             Kind::User(User::AbortedByCallback) => "operation aborted by an application callback",
         }

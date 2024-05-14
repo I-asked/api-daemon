@@ -1,18 +1,18 @@
 //! Security Policies support.
-use core_foundation::base::TCFType;
-#[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+#[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
 use core_foundation::base::CFOptionFlags;
+use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
-use security_framework_sys::base::SecPolicyRef;
-#[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+#[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
 use security_framework_sys::base::errSecParam;
+use security_framework_sys::base::SecPolicyRef;
 use security_framework_sys::policy::*;
 use std::fmt;
 use std::ptr;
 
-#[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
-use crate::Error;
 use crate::secure_transport::SslProtocolSide;
+#[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+use crate::Error;
 
 declare_TCFType! {
     /// A type representing a certificate validation policy.
@@ -30,9 +30,10 @@ impl fmt::Debug for SecPolicy {
     }
 }
 
-#[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+#[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
 bitflags::bitflags! {
     /// The flags used to specify revocation policy options.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct RevocationPolicy: CFOptionFlags {
         /// Perform revocation checking using OCSP (Online Certificate Status Protocol).
         const OCSP_METHOD = kSecRevocationOCSPMethod;
@@ -67,7 +68,7 @@ impl SecPolicy {
         }
     }
 
-    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
     /// Creates a `SecPolicy` for checking revocation of certificates.
     ///
     /// If you do not specify this policy creating a `SecTrust` object, the system defaults
@@ -83,6 +84,7 @@ impl SecPolicy {
     }
 
     /// Returns a policy object for the default X.509 policy.
+    #[must_use]
     pub fn create_x509() -> Self {
         unsafe {
             let policy = SecPolicyCreateBasicX509();

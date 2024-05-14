@@ -1,8 +1,6 @@
-use firestorm::profile_method;
-
 use crate::{IntoPatterns, Resource, ResourceDef};
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ResourceId(pub u16);
 
 /// Resource router.
@@ -30,7 +28,6 @@ impl<T, U> Router<T, U> {
     where
         R: Resource,
     {
-        profile_method!(recognize);
         self.recognize_fn(resource, |_, _| true)
     }
 
@@ -39,7 +36,6 @@ impl<T, U> Router<T, U> {
     where
         R: Resource,
     {
-        profile_method!(recognize_mut);
         self.recognize_mut_fn(resource, |_, _| true)
     }
 
@@ -55,8 +51,6 @@ impl<T, U> Router<T, U> {
         R: Resource,
         F: FnMut(&R, &U) -> bool,
     {
-        profile_method!(recognize_checked);
-
         for (rdef, val, ctx) in self.routes.iter() {
             if rdef.capture_match_info_fn(resource, |res| check(res, ctx)) {
                 return Some((val, ResourceId(rdef.id())));
@@ -77,8 +71,6 @@ impl<T, U> Router<T, U> {
         R: Resource,
         F: FnMut(&R, &U) -> bool,
     {
-        profile_method!(recognize_mut_checked);
-
         for (rdef, val, ctx) in self.routes.iter_mut() {
             if rdef.capture_match_info_fn(resource, |res| check(res, ctx)) {
                 return Some((val, ResourceId(rdef.id())));
@@ -104,8 +96,8 @@ impl<T, U> RouterBuilder<T, U> {
         val: T,
         ctx: U,
     ) -> (&mut ResourceDef, &mut T, &mut U) {
-        profile_method!(push);
         self.routes.push((rdef, val, ctx));
+        #[allow(clippy::map_identity)] // map is used to distribute &mut-ness to tuple elements
         self.routes
             .last_mut()
             .map(|(rdef, val, ctx)| (rdef, val, ctx))
@@ -126,12 +118,7 @@ where
     U: Default,
 {
     /// Registers resource for specified path.
-    pub fn path(
-        &mut self,
-        path: impl IntoPatterns,
-        val: T,
-    ) -> (&mut ResourceDef, &mut T, &mut U) {
-        profile_method!(path);
+    pub fn path(&mut self, path: impl IntoPatterns, val: T) -> (&mut ResourceDef, &mut T, &mut U) {
         self.push(ResourceDef::new(path), val, U::default())
     }
 
@@ -141,21 +128,21 @@ where
         prefix: impl IntoPatterns,
         val: T,
     ) -> (&mut ResourceDef, &mut T, &mut U) {
-        profile_method!(prefix);
         self.push(ResourceDef::prefix(prefix), val, U::default())
     }
 
     /// Registers resource for [`ResourceDef`].
     pub fn rdef(&mut self, rdef: ResourceDef, val: T) -> (&mut ResourceDef, &mut T, &mut U) {
-        profile_method!(rdef);
         self.push(rdef, val, U::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::path::Path;
-    use crate::router::{ResourceId, Router};
+    use crate::{
+        path::Path,
+        router::{ResourceId, Router},
+    };
 
     #[allow(clippy::cognitive_complexity)]
     #[test]
@@ -200,11 +187,11 @@ mod tests {
         assert_eq!(path.get("file").unwrap(), "file");
         assert_eq!(path.get("ext").unwrap(), "gz");
 
-        let mut path = Path::new("/vtest/ttt/index.html");
+        let mut path = Path::new("/v2/ttt/index.html");
         let (h, info) = router.recognize_mut(&mut path).unwrap();
         assert_eq!(*h, 14);
         assert_eq!(info, ResourceId(4));
-        assert_eq!(path.get("val").unwrap(), "test");
+        assert_eq!(path.get("val").unwrap(), "2");
         assert_eq!(path.get("val2").unwrap(), "ttt");
 
         let mut path = Path::new("/v/blah-blah/index.html");

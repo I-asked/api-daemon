@@ -93,7 +93,7 @@ impl ResponseBuilder {
                 Ok((key, value)) => {
                     parts.headers.insert(key, value);
                 }
-                Err(e) => self.err = Some(e.into()),
+                Err(err) => self.err = Some(err.into()),
             };
         }
 
@@ -119,7 +119,7 @@ impl ResponseBuilder {
         if let Some(parts) = self.inner() {
             match header.try_into_pair() {
                 Ok((key, value)) => parts.headers.append(key, value),
-                Err(e) => self.err = Some(e.into()),
+                Err(err) => self.err = Some(err.into()),
             };
         }
 
@@ -144,7 +144,7 @@ impl ResponseBuilder {
         self
     }
 
-    /// Set connection type to Upgrade
+    /// Set connection type to `Upgrade`.
     #[inline]
     pub fn upgrade<V>(&mut self, value: V) -> &mut Self
     where
@@ -161,7 +161,7 @@ impl ResponseBuilder {
         self
     }
 
-    /// Force close connection, even if it is marked as keep-alive
+    /// Force-close connection, even if it is marked as keep-alive.
     #[inline]
     pub fn force_close(&mut self) -> &mut Self {
         if let Some(parts) = self.inner() {
@@ -193,7 +193,7 @@ impl ResponseBuilder {
                 Ok(value) => {
                     parts.headers.insert(header::CONTENT_TYPE, value);
                 }
-                Err(e) => self.err = Some(e.into()),
+                Err(err) => self.err = Some(err.into()),
             };
         }
         self

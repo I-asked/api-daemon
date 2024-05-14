@@ -168,7 +168,7 @@ fn dfs() {
     {
         let mut cnt = 0;
         let mut dfs = Dfs::new(&gr, h);
-        while let Some(_) = dfs.next(&gr) {
+        while dfs.next(&gr).is_some() {
             cnt += 1;
         }
         assert_eq!(cnt, 4);
@@ -176,7 +176,7 @@ fn dfs() {
     {
         let mut cnt = 0;
         let mut dfs = Dfs::new(&gr, z);
-        while let Some(_) = dfs.next(&gr) {
+        while dfs.next(&gr).is_some() {
             cnt += 1;
         }
         assert_eq!(cnt, 1);
@@ -250,10 +250,10 @@ fn graphmap_directed() {
     // Add reverse edges -- ok!
     assert!(gr.add_edge(e, d, ()).is_none());
     // duplicate edge - no
-    assert!(!gr.add_edge(a, b, ()).is_none());
+    assert!(gr.add_edge(a, b, ()).is_some());
 
     // duplicate self loop - no
-    assert!(!gr.add_edge(b, b, ()).is_none());
+    assert!(gr.add_edge(b, b, ()).is_some());
     println!("{:#?}", gr);
 }
 
@@ -326,6 +326,26 @@ fn test_into_graph() {
 }
 
 #[test]
+fn test_from_graph() {
+    let mut gr: Graph<u32, u32, Directed> = Graph::new();
+    let node_a = gr.add_node(12);
+    let node_b = gr.add_node(13);
+    let node_c = gr.add_node(14);
+    gr.add_edge(node_a, node_b, 1000);
+    gr.add_edge(node_b, node_c, 999);
+    gr.add_edge(node_c, node_a, 1111);
+    gr.add_node(42);
+    let gr = gr;
+
+    let graph: GraphMap<u32, u32, Directed> = GraphMap::from_graph(gr.clone());
+    println!("{}", Dot::new(&gr));
+    println!("{}", Dot::new(&graph));
+
+    assert!(petgraph::algo::is_isomorphic(&gr, &graph));
+    assert_eq!(graph[(12, 13)], 1000);
+}
+
+#[test]
 fn test_all_edges_mut() {
     // graph with edge weights equal to in+out
     let mut graph: GraphMap<_, u32, Directed> =
@@ -377,4 +397,47 @@ fn self_loops_can_be_removed() {
 
     assert_eq!(graph.neighbors_directed((), Outgoing).next(), None);
     assert_eq!(graph.neighbors_directed((), Incoming).next(), None);
+}
+
+#[test]
+#[cfg(feature = "rayon")]
+fn test_parallel_iterator() {
+    use rayon::prelude::*;
+    let mut gr: DiGraphMap<u32, u32> = DiGraphMap::new();
+
+    for i in 0..1000 {
+        gr.add_node(i);
+    }
+
+    let serial_sum: u32 = gr.nodes().sum();
+    let parallel_sum: u32 = gr.par_nodes().sum();
+    assert_eq!(serial_sum, parallel_sum);
+
+    gr.par_nodes()
+        .enumerate()
+        .for_each(|(i, n)| assert_eq!(i as u32, n));
+
+    for i in 0..1000 {
+        gr.add_edge(i / 2, i, i + i / 2);
+    }
+
+    let serial_sum: u32 = gr.all_edges().map(|(.., &e)| e).sum();
+    let parallel_sum: u32 = gr.par_all_edges().map(|(.., &e)| e).sum();
+    assert_eq!(serial_sum, parallel_sum);
+
+    gr.par_all_edges_mut().for_each(|(n1, n2, e)| *e -= n1 + n2);
+    gr.all_edges().for_each(|(.., &e)| assert_eq!(e, 0));
+}
+
+#[test]
+fn test_alternative_hasher() {
+    let mut gr: GraphMap<&str, u32, Directed, fxhash::FxBuildHasher> = GraphMap::new();
+    gr.add_node("abc");
+    gr.add_node("def");
+    gr.add_node("ghi");
+
+    gr.add_edge("abc", "def", 1);
+
+    assert!(gr.contains_edge("abc", "def"));
+    assert!(!gr.contains_edge("abc", "ghi"));
 }

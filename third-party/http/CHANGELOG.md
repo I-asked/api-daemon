@@ -1,3 +1,39 @@
+# 1.1.0 (March 4, 2024)
+
+* Add methods to allow trying to allocate in the `HeaderMap`, returning an error if oversize instead of panicking.
+* Add `Extensions::get_or_insert()` method.
+* Implement `From<Uri>` for `uri::Builder`.
+* Fix `HeaderName::from_lowercase` that could allow NUL bytes in some cases.
+
+# 1.0.0 (November 15, 2023)
+
+- Implement `Clone` for `Request`, `Response`, and `Extensions`. This breaking change requires
+  that all extensions now implement `Clone`.
+- Add a default-on `std` feature. Disabling it currently is not supported.
+- Fix MIRI warnings in `HeaderMap::iter()`.
+
+# 0.2.10 (November 10, 2023)
+
+* Fix parsing of `Authority` to handle square brackets in incorrect order.
+* Fix `HeaderMap::with_capacity()` to handle arithmetic overflow.
+
+# 0.2.9 (February 17, 2023)
+
+* Add `HeaderName` constants for `cache-status` and `cdn-cache-control`.
+* Implement `Hash` for `PathAndQuery`.
+* Re-export `HeaderName` at crate root.
+
+# 0.2.8 (June 6, 2022)
+
+* Fix internal usage of uninitialized memory to use `MaybeUninit` inside `HeaderName`.
+
+# 0.2.7 (April 28, 2022)
+
+* MSRV bumped to `1.49`.
+* Add `extend()` method to `Extensions`.
+* Add `From<Authority>` and `From<PathAndQuery>` impls for `Uri`.
+* Make `HeaderName::from_static` a `const fn`.
+
 # 0.2.6 (December 30, 2021)
 
 * Upgrade internal `itoa` dependency to 1.0.

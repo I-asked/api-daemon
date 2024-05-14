@@ -1,3 +1,114 @@
+# 1.6.0 (March 22, 2024)
+
+### Added
+
+- Add `Bytes::is_unique` (#643)
+
+### Documented
+
+- Fix changelog typo (#628)
+- Fix some spelling mistakes (#633)
+- Typo fix (#637)
+- Fix broken links (#639)
+- Add security policy (#649)
+
+### Internal changes
+
+- Move comment to correct constant (#629)
+- Various cleanup (#635)
+- Simplify `UninitSlice::as_uninit_slice_mut()` logic (#644)
+- Use `self.` instead of `Self::` (#642)
+- `BytesMut`: Assert alignment of `Shared` (#652)
+- Remove unnecessary namespace qualifier (#660)
+- Remove an unnecessary else branch (#662)
+- Remove unreachable else branch (#661)
+- make parameter mut in `From<Vec>` (#667)
+- Restore commented tests (#665)
+- Use `sub` instead of `offset` (#668)
+- Calculate original capacity only if necessary (#666)
+- `set_vec_pos` does not need a second parameter (#672)
+- `get_vec_pos`: use `&self` instead of `&mut self` (#670)
+- Refactor `split_at`/`split_to` (#663)
+- Use `Iterator` from the prelude (#673)
+- `copy_to_bytes`: Add panic section to docs (#676)
+- Remove redundant reserve call (#674)
+- Use `ManuallyDrop` instead of `mem::forget` (#675)
+
+
+# 1.5.0 (September 7, 2023)
+
+### Added
+
+- Add `UninitSlice::{new,uninit}` (#598, #599)
+- Implement `BufMut` for `&mut [MaybeUninit<u8>]` (#597)
+
+### Changed
+
+- Mark `BytesMut::extend_from_slice` as inline (#595)
+
+# 1.4.0 (January 31, 2023)
+
+### Added
+
+- Make `IntoIter` constructor public (#581)
+
+### Fixed
+
+- Avoid large reallocations when freezing `BytesMut` (#592)
+
+### Documented
+
+- Document which functions require `std` (#591)
+- Fix duplicate "the the" typos (#585)
+
+# 1.3.0 (November 20, 2022)
+
+### Added
+
+- Rename and expose `BytesMut::spare_capacity_mut` (#572)
+- Implement native-endian get and put functions for `Buf` and `BufMut` (#576)
+
+### Fixed
+
+- Don't have important data in unused capacity when calling reserve (#563)
+
+### Documented
+
+- `Bytes::new` etc should return `Self` not `Bytes` (#568)
+
+# 1.2.1 (July 30, 2022)
+
+### Fixed
+
+- Fix unbounded memory growth when using `reserve` (#560)
+
+# 1.2.0 (July 19, 2022)
+
+### Added
+
+- Add `BytesMut::zeroed` (#517)
+- Implement `Extend<Bytes>` for `BytesMut` (#527)
+- Add conversion from `BytesMut` to `Vec<u8>` (#543, #554)
+- Add conversion from `Bytes` to `Vec<u8>` (#547)
+- Add `UninitSlice::as_uninit_slice_mut()` (#548)
+- Add const to `Bytes::{len,is_empty}` (#514)
+
+### Changed
+
+- Reuse vector in `BytesMut::reserve` (#539, #544)
+
+### Fixed
+
+- Make miri happy (#515, #523, #542, #545, #553)
+- Make tsan happy (#541)
+- Fix `remaining_mut()` on chain (#488)
+- Fix amortized asymptotics of `BytesMut` (#555)
+
+### Documented
+
+- Redraw layout diagram with box drawing characters (#539)
+- Clarify `BytesMut::unsplit` docs (#535)
+
 # 1.1.0 (August 25, 2021)
 
 ### Added

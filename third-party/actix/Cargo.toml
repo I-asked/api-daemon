@@ -12,7 +12,7 @@
 [package]
 edition = "2018"
 name = "actix"
-version = "0.12.0"
+version = "0.13.0"
 authors = [
     "Nikolay Kim <fafhrd91@gmail.com>",
     "fakeshadow <24548779@qq.com>",

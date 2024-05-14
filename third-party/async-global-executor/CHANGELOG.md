@@ -1,3 +1,42 @@
+# Version 2.4.1
+
+- Update to events-listener 4.0
+
+# Version 2.4.0
+
+- Update to async-io 2.0
+
+# Version 2.3.1
+
+- Update blocking dependency
+
+# Version 2.3.0
+
+- Switch back to edition 2021 and MSRV 1.59, dropping num-cups dependency
+
+# Version 2.2.0
+
+- Revert back to edition 2018 and MSRV 1.49
+
+# Version 2.1.0
+
+- Switch from async-mutex to async-lock
+- Switch from num-cpus to Use `std::thread::available_parallelism`
+- Update MSRV to 1.59
+- Update to edition 2021
+
+# Version 2.0.4
+
+- Return concrete type Task from `spawn_blocking`
+
+# Version 2.0.3
+
+- Documentation updates
+
+# Version 2.0.2
+
+- Documentation updates
+
 # Version 2.0.1
 
 - fix build without default features

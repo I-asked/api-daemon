@@ -99,8 +99,7 @@ impl Arbiter {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Arbiter {
         Self::with_tokio_rt(|| {
-            crate::runtime::default_tokio_runtime()
-                .expect("Cannot create new Arbiter's Runtime.")
+            crate::runtime::default_tokio_runtime().expect("Cannot create new Arbiter's Runtime.")
         })
     }
 
@@ -149,9 +148,7 @@ impl Arbiter {
                         .send(SystemCommand::DeregisterArbiter(arb_id));
                 }
             })
-            .unwrap_or_else(|err| {
-                panic!("Cannot spawn Arbiter's thread: {:?}. {:?}", &name, err)
-            });
+            .unwrap_or_else(|err| panic!("Cannot spawn Arbiter's thread: {name:?}: {err:?}"));
 
         ready_rx.recv().unwrap();
 
@@ -201,9 +198,7 @@ impl Arbiter {
                         .send(SystemCommand::DeregisterArbiter(arb_id));
                 }
             })
-            .unwrap_or_else(|err| {
-                panic!("Cannot spawn Arbiter's thread: {:?}. {:?}", &name, err)
-            });
+            .unwrap_or_else(|err| panic!("Cannot spawn Arbiter's thread: {name:?}: {err:?}"));
 
         ready_rx.recv().unwrap();
 
@@ -260,6 +255,7 @@ impl Arbiter {
     /// If you require a result, include a response channel in the future.
     ///
     /// Returns true if future was sent successfully and false if the Arbiter has died.
+    #[track_caller]
     pub fn spawn<Fut>(&self, future: Fut) -> bool
     where
         Fut: Future<Output = ()> + Send + 'static,
@@ -275,6 +271,7 @@ impl Arbiter {
     /// channel in the function.
     ///
     /// Returns true if function was sent successfully and false if the Arbiter has died.
+    #[track_caller]
     pub fn spawn_fn<F>(&self, f: F) -> bool
     where
         F: FnOnce() + Send + 'static,
@@ -301,7 +298,7 @@ impl Future for ArbiterRunner {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // process all items currently buffered in channel
         loop {
-            match ready!(Pin::new(&mut self.rx).poll_recv(cx)) {
+            match ready!(self.rx.poll_recv(cx)) {
                 // channel closed; no more messages can be received
                 None => return Poll::Ready(()),
 

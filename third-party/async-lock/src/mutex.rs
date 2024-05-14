@@ -1,17 +1,20 @@
-use std::cell::UnsafeCell;
-use std::fmt;
-use std::future::Future;
-use std::ops::{Deref, DerefMut};
-use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use core::borrow::Borrow;
+use core::cell::UnsafeCell;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
+use core::pin::Pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::task::Poll;
+use core::usize;
 
-#[cfg(not(target_arch = "wasm32"))]
+use alloc::sync::Arc;
+
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
 use std::time::{Duration, Instant};
 
-use std::usize;
-
-use event_listener::Event;
+use event_listener::{Event, EventListener};
+use event_listener_strategy::{easy_wrapper, EventListenerFuture};
 
 /// An async mutex.
 ///
@@ -102,115 +105,39 @@ impl<T: ?Sized> Mutex<T> {
     /// # })
     /// ```
     #[inline]
-    pub async fn lock(&self) -> MutexGuard<'_, T> {
-        if let Some(guard) = self.try_lock() {
-            return guard;
-        }
-        self.acquire_slow().await;
-        MutexGuard(self)
+    pub fn lock(&self) -> Lock<'_, T> {
+        Lock::_new(LockInner {
+            mutex: self,
+            acquire_slow: None,
+        })
     }
 
-    /// Slow path for acquiring the mutex.
-    #[cold]
-    async fn acquire_slow(&self) {
-        // Get the current time.
-        #[cfg(not(target_arch = "wasm32"))]
-        let start = Instant::now();
-
-        loop {
-            // Start listening for events.
-            let listener = self.lock_ops.listen();
-
-            // Try locking if nobody is being starved.
-            match self
-                .state
-                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Acquire)
-                .unwrap_or_else(|x| x)
-            {
-                // Lock acquired!
-                0 => return,
-
-                // Lock is held and nobody is starved.
-                1 => {}
-
-                // Somebody is starved.
-                _ => break,
-            }
-
-            // Wait for a notification.
-            listener.await;
-
-            // Try locking if nobody is being starved.
-            match self
-                .state
-                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Acquire)
-                .unwrap_or_else(|x| x)
-            {
-                // Lock acquired!
-                0 => return,
-
-                // Lock is held and nobody is starved.
-                1 => {}
-
-                // Somebody is starved.
-                _ => {
-                    // Notify the first listener in line because we probably received a
-                    // notification that was meant for a starved task.
-                    self.lock_ops.notify(1);
-                    break;
-                }
-            }
-
-            // If waiting for too long, fall back to a fairer locking strategy that will prevent
-            // newer lock operations from starving us forever.
-            #[cfg(not(target_arch = "wasm32"))]
-            if start.elapsed() > Duration::from_micros(500) {
-                break;
-            }
-        }
-
-        // Increment the number of starved lock operations.
-        if self.state.fetch_add(2, Ordering::Release) > usize::MAX / 2 {
-            // In case of potential overflow, abort.
-            process::abort();
-        }
-
-        // Decrement the counter when exiting this function.
-        let _call = CallOnDrop(|| {
-            self.state.fetch_sub(2, Ordering::Release);
-        });
-
-        loop {
-            // Start listening for events.
-            let listener = self.lock_ops.listen();
-
-            // Try locking if nobody else is being starved.
-            match self
-                .state
-                .compare_exchange(2, 2 | 1, Ordering::Acquire, Ordering::Acquire)
-                .unwrap_or_else(|x| x)
-            {
-                // Lock acquired!
-                2 => return,
-
-                // Lock is held by someone.
-                s if s % 2 == 1 => {}
-
-                // Lock is available.
-                _ => {
-                    // Be fair: notify the first listener and then go wait in line.
-                    self.lock_ops.notify(1);
-                }
-            }
-
-            // Wait for a notification.
-            listener.await;
-
-            // Try acquiring the lock without waiting for others.
-            if self.state.fetch_or(1, Ordering::Acquire) % 2 == 0 {
-                return;
-            }
-        }
+    /// Acquires the mutex using the blocking strategy.
+    ///
+    /// Returns a guard that releases the mutex when dropped.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`lock`][Mutex::lock] method,
+    /// this method will block the current thread until the lock is acquired.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended to be
+    /// used in a way that a mutex can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in a deadlock.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_lock::Mutex;
+    ///
+    /// let mutex = Mutex::new(10);
+    /// let guard = mutex.lock_blocking();
+    /// assert_eq!(*guard, 10);
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    #[inline]
+    pub fn lock_blocking(&self) -> MutexGuard<'_, T> {
+        self.lock().wait()
     }
 
     /// Attempts to acquire the mutex.
@@ -261,17 +188,22 @@ impl<T: ?Sized> Mutex<T> {
     pub fn get_mut(&mut self) -> &mut T {
         unsafe { &mut *self.data.get() }
     }
+
+    /// Unlocks the mutex directly.
+    ///
+    /// # Safety
+    ///
+    /// This function is intended to be used only in the case where the mutex is locked,
+    /// and the guard is subsequently forgotten. Calling this while you don't hold a lock
+    /// on the mutex will likely lead to UB.
+    pub(crate) unsafe fn unlock_unchecked(&self) {
+        // Remove the last bit and notify a waiting lock operation.
+        self.state.fetch_sub(1, Ordering::Release);
+        self.lock_ops.notify(1);
+    }
 }
 
 impl<T: ?Sized> Mutex<T> {
-    async fn lock_arc_impl(self: Arc<Self>) -> MutexGuardArc<T> {
-        if let Some(guard) = self.try_lock_arc() {
-            return guard;
-        }
-        self.acquire_slow().await;
-        MutexGuardArc(self)
-    }
-
     /// Acquires the mutex and clones a reference to it.
     ///
     /// Returns an owned guard that releases the mutex when dropped.
@@ -289,8 +221,39 @@ impl<T: ?Sized> Mutex<T> {
     /// # })
     /// ```
     #[inline]
-    pub fn lock_arc(self: &Arc<Self>) -> impl Future<Output = MutexGuardArc<T>> {
-        self.clone().lock_arc_impl()
+    pub fn lock_arc(self: &Arc<Self>) -> LockArc<T> {
+        LockArc::_new(LockArcInnards::Unpolled {
+            mutex: Some(self.clone()),
+        })
+    }
+
+    /// Acquires the mutex and clones a reference to it using the blocking strategy.
+    ///
+    /// Returns an owned guard that releases the mutex when dropped.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`lock_arc`][Mutex::lock_arc] method,
+    /// this method will block the current thread until the lock is acquired.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended to be
+    /// used in a way that a mutex can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in a deadlock.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_lock::Mutex;
+    /// use std::sync::Arc;
+    ///
+    /// let mutex = Arc::new(Mutex::new(10));
+    /// let guard = mutex.lock_arc_blocking();
+    /// assert_eq!(*guard, 10);
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    #[inline]
+    pub fn lock_arc_blocking(self: &Arc<Self>) -> MutexGuardArc<T> {
+        self.lock_arc().wait()
     }
 
     /// Attempts to acquire the mutex and clone a reference to it.
@@ -352,7 +315,319 @@ impl<T: Default + ?Sized> Default for Mutex<T> {
     }
 }
 
+easy_wrapper! {
+    /// The future returned by [`Mutex::lock`].
+    pub struct Lock<'a, T: ?Sized>(LockInner<'a, T> => MutexGuard<'a, T>);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
+}
+
+pin_project_lite::pin_project! {
+    /// Inner future for acquiring the mutex.
+    struct LockInner<'a, T: ?Sized> {
+        // Reference to the mutex.
+        mutex: &'a Mutex<T>,
+
+        // The future that waits for the mutex to become available.
+        #[pin]
+        acquire_slow: Option<AcquireSlow<&'a Mutex<T>, T>>,
+    }
+}
+
+unsafe impl<T: Send + ?Sized> Send for Lock<'_, T> {}
+unsafe impl<T: Sync + ?Sized> Sync for Lock<'_, T> {}
+
+impl<T: ?Sized> fmt::Debug for Lock<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Lock { .. }")
+    }
+}
+
+impl<'a, T: ?Sized> EventListenerFuture for LockInner<'a, T> {
+    type Output = MutexGuard<'a, T>;
+
+    #[inline]
+    fn poll_with_strategy<'x, S: event_listener_strategy::Strategy<'x>>(
+        self: Pin<&mut Self>,
+        strategy: &mut S,
+        context: &mut S::Context,
+    ) -> Poll<Self::Output> {
+        let mut this = self.project();
+
+        // This may seem weird, but the borrow checker complains otherwise.
+        if this.acquire_slow.is_none() {
+            match this.mutex.try_lock() {
+                Some(guard) => return Poll::Ready(guard),
+                None => {
+                    this.acquire_slow.set(Some(AcquireSlow::new(this.mutex)));
+                }
+            }
+        }
+
+        ready!(this
+            .acquire_slow
+            .as_pin_mut()
+            .unwrap()
+            .poll_with_strategy(strategy, context));
+        Poll::Ready(MutexGuard(this.mutex))
+    }
+}
+
+easy_wrapper! {
+    /// The future returned by [`Mutex::lock_arc`].
+    pub struct LockArc<T: ?Sized>(LockArcInnards<T> => MutexGuardArc<T>);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
+}
+
+pin_project_lite::pin_project! {
+    #[project = LockArcInnardsProj]
+    enum LockArcInnards<T: ?Sized> {
+        /// We have not tried to poll the fast path yet.
+        Unpolled { mutex: Option<Arc<Mutex<T>>> },
+
+        /// We are acquiring the mutex through the slow path.
+        AcquireSlow {
+            #[pin]
+            inner: AcquireSlow<Arc<Mutex<T>>, T>
+        },
+    }
+}
+
+unsafe impl<T: Send + ?Sized> Send for LockArc<T> {}
+unsafe impl<T: Sync + ?Sized> Sync for LockArc<T> {}
+
+impl<T: ?Sized> fmt::Debug for LockArcInnards<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("LockArc { .. }")
+    }
+}
+
+impl<T: ?Sized> EventListenerFuture for LockArcInnards<T> {
+    type Output = MutexGuardArc<T>;
+
+    fn poll_with_strategy<'a, S: event_listener_strategy::Strategy<'a>>(
+        mut self: Pin<&mut Self>,
+        strategy: &mut S,
+        context: &mut S::Context,
+    ) -> Poll<Self::Output> {
+        // Set the inner future if needed.
+        if let LockArcInnardsProj::Unpolled { mutex } = self.as_mut().project() {
+            let mutex = mutex.take().expect("mutex taken more than once");
+
+            // Try the fast path before trying to register slowly.
+            if let Some(guard) = mutex.try_lock_arc() {
+                return Poll::Ready(guard);
+            }
+
+            // Set the inner future to the slow acquire path.
+            self.as_mut().set(LockArcInnards::AcquireSlow {
+                inner: AcquireSlow::new(mutex),
+            });
+        }
+
+        // Poll the inner future.
+        let value = match self.project() {
+            LockArcInnardsProj::AcquireSlow { inner } => {
+                ready!(inner.poll_with_strategy(strategy, context))
+            }
+            _ => unreachable!(),
+        };
+
+        Poll::Ready(MutexGuardArc(value))
+    }
+}
+
+pin_project_lite::pin_project! {
+    /// Future for acquiring the mutex slowly.
+    struct AcquireSlow<B: Borrow<Mutex<T>>, T: ?Sized> {
+        // Reference to the mutex.
+        mutex: Option<B>,
+
+        // The event listener waiting on the mutex.
+        #[pin]
+        listener: EventListener,
+
+        // The point at which the mutex lock was started.
+        start: Start,
+
+        // This lock operation is starving.
+        starved: bool,
+
+        // Capture the `T` lifetime.
+        #[pin]
+        _marker: PhantomData<T>,
+    }
+
+    impl<T: ?Sized, B: Borrow<Mutex<T>>> PinnedDrop for AcquireSlow<B, T> {
+        fn drop(this: Pin<&mut Self>) {
+            // Make sure the starvation counter is decremented.
+            this.take_mutex();
+        }
+    }
+}
+
+/// `pin_project_lite` doesn't support `#[cfg]` yet, so we have to do this manually.
+struct Start {
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    start: Option<Instant>,
+}
+
+impl<T: ?Sized, B: Borrow<Mutex<T>>> AcquireSlow<B, T> {
+    /// Create a new `AcquireSlow` future.
+    #[cold]
+    fn new(mutex: B) -> Self {
+        // Create a new instance of the listener.
+        let listener = { EventListener::new() };
+
+        AcquireSlow {
+            mutex: Some(mutex),
+            listener,
+            start: Start {
+                #[cfg(all(feature = "std", not(target_family = "wasm")))]
+                start: None,
+            },
+            starved: false,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Take the mutex reference out, decrementing the counter if necessary.
+    fn take_mutex(self: Pin<&mut Self>) -> Option<B> {
+        let this = self.project();
+        let mutex = this.mutex.take();
+
+        if *this.starved {
+            if let Some(mutex) = mutex.as_ref() {
+                // Decrement this counter before we exit.
+                mutex.borrow().state.fetch_sub(2, Ordering::Release);
+            }
+        }
+
+        mutex
+    }
+}
+
+impl<T: ?Sized, B: Unpin + Borrow<Mutex<T>>> EventListenerFuture for AcquireSlow<B, T> {
+    type Output = B;
+
+    #[cold]
+    fn poll_with_strategy<'a, S: event_listener_strategy::Strategy<'a>>(
+        mut self: Pin<&mut Self>,
+        strategy: &mut S,
+        context: &mut S::Context,
+    ) -> Poll<Self::Output> {
+        let mut this = self.as_mut().project();
+        #[cfg(all(feature = "std", not(target_family = "wasm")))]
+        let start = *this.start.start.get_or_insert_with(Instant::now);
+        let mutex = Borrow::<Mutex<T>>::borrow(
+            this.mutex.as_ref().expect("future polled after completion"),
+        );
+
+        // Only use this hot loop if we aren't currently starved.
+        if !*this.starved {
+            loop {
+                // Start listening for events.
+                if !this.listener.is_listening() {
+                    this.listener.as_mut().listen(&mutex.lock_ops);
+
+                    // Try locking if nobody is being starved.
+                    match mutex
+                        .state
+                        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Acquire)
+                        .unwrap_or_else(|x| x)
+                    {
+                        // Lock acquired!
+                        0 => return Poll::Ready(self.take_mutex().unwrap()),
+
+                        // Lock is held and nobody is starved.
+                        1 => {}
+
+                        // Somebody is starved.
+                        _ => break,
+                    }
+                } else {
+                    ready!(strategy.poll(this.listener.as_mut(), context));
+
+                    // Try locking if nobody is being starved.
+                    match mutex
+                        .state
+                        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Acquire)
+                        .unwrap_or_else(|x| x)
+                    {
+                        // Lock acquired!
+                        0 => return Poll::Ready(self.take_mutex().unwrap()),
+
+                        // Lock is held and nobody is starved.
+                        1 => {}
+
+                        // Somebody is starved.
+                        _ => {
+                            // Notify the first listener in line because we probably received a
+                            // notification that was meant for a starved task.
+                            mutex.lock_ops.notify(1);
+                            break;
+                        }
+                    }
+
+                    // If waiting for too long, fall back to a fairer locking strategy that will prevent
+                    // newer lock operations from starving us forever.
+                    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+                    if start.elapsed() > Duration::from_micros(500) {
+                        break;
+                    }
+                }
+            }
+
+            // Increment the number of starved lock operations.
+            if mutex.state.fetch_add(2, Ordering::Release) > usize::MAX / 2 {
+                // In case of potential overflow, abort.
+                crate::abort();
+            }
+
+            // Indicate that we are now starving and will use a fairer locking strategy.
+            *this.starved = true;
+        }
+
+        // Fairer locking loop.
+        loop {
+            if !this.listener.is_listening() {
+                // Start listening for events.
+                this.listener.as_mut().listen(&mutex.lock_ops);
+
+                // Try locking if nobody else is being starved.
+                match mutex
+                    .state
+                    .compare_exchange(2, 2 | 1, Ordering::Acquire, Ordering::Acquire)
+                    .unwrap_or_else(|x| x)
+                {
+                    // Lock acquired!
+                    2 => return Poll::Ready(self.take_mutex().unwrap()),
+
+                    // Lock is held by someone.
+                    s if s % 2 == 1 => {}
+
+                    // Lock is available.
+                    _ => {
+                        // Be fair: notify the first listener and then go wait in line.
+                        mutex.lock_ops.notify(1);
+                    }
+                }
+            } else {
+                // Wait for a notification.
+                ready!(strategy.poll(this.listener.as_mut(), context));
+
+                // Try acquiring the lock without waiting for others.
+                if mutex.state.fetch_or(1, Ordering::Acquire) % 2 == 0 {
+                    return Poll::Ready(self.take_mutex().unwrap());
+                }
+            }
+        }
+    }
+}
+
 /// A guard that releases the mutex when dropped.
+#[clippy::has_significant_drop]
 pub struct MutexGuard<'a, T: ?Sized>(&'a Mutex<T>);
 
 unsafe impl<T: Send + ?Sized> Send for MutexGuard<'_, T> {}
@@ -378,10 +653,12 @@ impl<'a, T: ?Sized> MutexGuard<'a, T> {
 }
 
 impl<T: ?Sized> Drop for MutexGuard<'_, T> {
+    #[inline]
     fn drop(&mut self) {
-        // Remove the last bit and notify a waiting lock operation.
-        self.0.state.fetch_sub(1, Ordering::Release);
-        self.0.lock_ops.notify(1);
+        // SAFETY: we are dropping the mutex guard, therefore unlocking the mutex.
+        unsafe {
+            self.0.unlock_unchecked();
+        }
     }
 }
 
@@ -412,6 +689,7 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 }
 
 /// An owned guard that releases the mutex when dropped.
+#[clippy::has_significant_drop]
 pub struct MutexGuardArc<T: ?Sized>(Arc<Mutex<T>>);
 
 unsafe impl<T: Send + ?Sized> Send for MutexGuardArc<T> {}
@@ -432,16 +710,23 @@ impl<T: ?Sized> MutexGuardArc<T> {
     /// dbg!(MutexGuardArc::source(&guard));
     /// # })
     /// ```
-    pub fn source(guard: &MutexGuardArc<T>) -> &Arc<Mutex<T>> {
+    pub fn source(guard: &Self) -> &Arc<Mutex<T>>
+    where
+        // Required because `MutexGuardArc` implements `Sync` regardless of whether `T` is `Send`,
+        // but this method allows dropping `T` from a different thead than it was created in.
+        T: Send,
+    {
         &guard.0
     }
 }
 
 impl<T: ?Sized> Drop for MutexGuardArc<T> {
+    #[inline]
     fn drop(&mut self) {
-        // Remove the last bit and notify a waiting lock operation.
-        self.0.state.fetch_sub(1, Ordering::Release);
-        self.0.lock_ops.notify(1);
+        // SAFETY: we are dropping the mutex guard, therefore unlocking the mutex.
+        unsafe {
+            self.0.unlock_unchecked();
+        }
     }
 }
 

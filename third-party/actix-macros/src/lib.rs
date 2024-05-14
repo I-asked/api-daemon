@@ -9,11 +9,15 @@
 //! See docs for the [`#[test]`](macro@test) macro.
 
 #![deny(rust_2018_idioms, nonstandard_style)]
+#![warn(future_incompatible)]
 #![doc(html_logo_url = "https://actix.rs/img/logo.png")]
 #![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
 
 use proc_macro::TokenStream;
 use quote::quote;
+use syn::parse::Parser as _;
+
+type AttributeArgs = syn::punctuated::Punctuated<syn::Meta, syn::Token![,]>;
 
 /// Marks async entry-point function to be executed by Actix system.
 ///
@@ -24,9 +28,9 @@ use quote::quote;
 ///     println!("Hello world");
 /// }
 /// ```
-#[allow(clippy::needless_doctest_main)]
+// #[allow(clippy::needless_doctest_main)]
+// #[cfg(not(test))] // Work around for rust-lang/rust#62127
 #[proc_macro_attribute]
-#[cfg(not(test))] // Work around for rust-lang/rust#62127
 pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = match syn::parse::<syn::ItemFn>(item.clone()) {
         Ok(input) => input,
@@ -34,7 +38,11 @@ pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return input_and_compile_error(item, err),
     };
 
-    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    let parser = AttributeArgs::parse_terminated;
+    let args = match parser.parse(args.clone()) {
+        Ok(args) => args,
+        Err(err) => return input_and_compile_error(args, err),
+    };
 
     let attrs = &input.attrs;
     let vis = &input.vis;
@@ -54,11 +62,15 @@ pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
 
     for arg in &args {
         match arg {
-            syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
-                lit: syn::Lit::Str(lit),
+            syn::Meta::NameValue(syn::MetaNameValue {
                 path,
+                value:
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit),
+                        ..
+                    }),
                 ..
-            })) => match path
+            }) => match path
                 .get_ident()
                 .map(|i| i.to_string().to_lowercase())
                 .as_deref()
@@ -77,6 +89,7 @@ pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
                         .into();
                 }
             },
+
             _ => {
                 return syn::Error::new_spanned(arg, "Unknown attribute specified")
                     .to_compile_error()
@@ -113,7 +126,11 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return input_and_compile_error(item, err),
     };
 
-    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+    let parser = AttributeArgs::parse_terminated;
+    let args = match parser.parse(args.clone()) {
+        Ok(args) => args,
+        Err(err) => return input_and_compile_error(args, err),
+    };
 
     let attrs = &input.attrs;
     let vis = &input.vis;
@@ -122,7 +139,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut has_test_attr = false;
 
     for attr in attrs {
-        if attr.path.is_ident("test") {
+        if attr.path().is_ident("test") {
             has_test_attr = true;
         }
     }
@@ -148,11 +165,15 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
 
     for arg in &args {
         match arg {
-            syn::NestedMeta::Meta(syn::Meta::NameValue(syn::MetaNameValue {
-                lit: syn::Lit::Str(lit),
+            syn::Meta::NameValue(syn::MetaNameValue {
                 path,
+                value:
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit),
+                        ..
+                    }),
                 ..
-            })) => match path
+            }) => match path
                 .get_ident()
                 .map(|i| i.to_string().to_lowercase())
                 .as_deref()

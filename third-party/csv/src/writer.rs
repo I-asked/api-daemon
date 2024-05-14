@@ -1,18 +1,19 @@
-use std::fs::File;
-use std::io;
-use std::path::Path;
-use std::result;
+use std::{fs::File, io, path::Path, result};
 
-use csv_core::{
-    self, WriteResult, Writer as CoreWriter,
-    WriterBuilder as CoreWriterBuilder,
+use {
+    csv_core::{
+        self, WriteResult, Writer as CoreWriter,
+        WriterBuilder as CoreWriterBuilder,
+    },
+    serde::Serialize,
 };
-use serde::Serialize;
 
-use crate::byte_record::ByteRecord;
-use crate::error::{Error, ErrorKind, IntoInnerError, Result};
-use crate::serializer::{serialize, serialize_header};
-use crate::{QuoteStyle, Terminator};
+use crate::{
+    byte_record::ByteRecord,
+    error::{Error, ErrorKind, IntoInnerError, Result},
+    serializer::{serialize, serialize_header},
+    {QuoteStyle, Terminator},
+};
 
 /// Builds a CSV writer with various configuration knobs.
 ///
@@ -166,9 +167,8 @@ impl WriterBuilder {
     /// use std::error::Error;
     ///
     /// use csv::WriterBuilder;
-    /// use serde::Serialize;
     ///
-    /// #[derive(Serialize)]
+    /// #[derive(serde::Serialize)]
     /// struct Row<'a> {
     ///     city: &'a str,
     ///     country: &'a str,
@@ -470,6 +470,34 @@ impl WriterBuilder {
         self
     }
 
+    /// The comment character that will be used when later reading the file.
+    ///
+    /// If `quote_style` is set to `QuoteStyle::Necessary`, a field will
+    /// be quoted if the comment character is detected anywhere in the field.
+    ///
+    /// The default value is None.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::error::Error;
+    /// use csv::WriterBuilder;
+    ///
+    /// # fn main() { example().unwrap(); }
+    /// fn example() -> Result<(), Box<dyn Error>> {
+    ///     let mut wtr =
+    ///         WriterBuilder::new().comment(Some(b'#')).from_writer(Vec::new());
+    ///     wtr.write_record(&["# comment", "another"]).unwrap();
+    ///     let buf = wtr.into_inner().unwrap();
+    ///     assert_eq!(String::from_utf8(buf).unwrap(), "\"# comment\",another\n");
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn comment(&mut self, comment: Option<u8>) -> &mut WriterBuilder {
+        self.builder.comment(comment);
+        self
+    }
+
     /// Set the capacity (in bytes) of the internal buffer used in the CSV
     /// writer. This defaults to a reasonable setting.
     pub fn buffer_capacity(&mut self, capacity: usize) -> &mut WriterBuilder {
@@ -478,7 +506,7 @@ impl WriterBuilder {
     }
 }
 
-/// A already configured CSV writer.
+/// An already configured CSV writer.
 ///
 /// A CSV writer takes as input Rust values and writes those values in a valid
 /// CSV format as output.
@@ -518,7 +546,7 @@ struct WriterState {
     header: HeaderState,
     /// Whether inconsistent record lengths are allowed.
     flexible: bool,
-    /// The number of fields writtein in the first record. This is compared
+    /// The number of fields written in the first record. This is compared
     /// with `fields_written` on all subsequent records to check for
     /// inconsistent record lengths.
     first_field_count: Option<u64>,
@@ -536,7 +564,7 @@ struct WriterState {
 enum HeaderState {
     /// Indicates that we should attempt to write a header.
     Write,
-    /// Indicates that writing a header was attempt, and a header was written.
+    /// Indicates that writing a header was attempted, and a header was written.
     DidWrite,
     /// Indicates that writing a header was attempted, but no headers were
     /// written or the attempt failed.
@@ -655,9 +683,8 @@ impl<W: io::Write> Writer<W> {
     /// use std::error::Error;
     ///
     /// use csv::Writer;
-    /// use serde::Serialize;
     ///
-    /// #[derive(Serialize)]
+    /// #[derive(serde::Serialize)]
     /// struct Row<'a> {
     ///     city: &'a str,
     ///     country: &'a str,
@@ -738,15 +765,14 @@ impl<W: io::Write> Writer<W> {
     /// use std::error::Error;
     ///
     /// use csv::Writer;
-    /// use serde::Serialize;
     ///
-    /// #[derive(Serialize)]
+    /// #[derive(serde::Serialize)]
     /// struct Row {
     ///     label: String,
     ///     value: Value,
     /// }
     ///
-    /// #[derive(Serialize)]
+    /// #[derive(serde::Serialize)]
     /// enum Value {
     ///     Integer(i64),
     ///     Float(f64),
@@ -804,9 +830,8 @@ impl<W: io::Write> Writer<W> {
     /// use std::error::Error;
     ///
     /// use csv::WriterBuilder;
-    /// use serde::Serialize;
     ///
-    /// #[derive(Serialize)]
+    /// #[derive(serde::Serialize)]
     /// struct Row {
     ///     label: String,
     ///     values: Vec<f64>,
@@ -1071,6 +1096,11 @@ impl<W: io::Write> Writer<W> {
         Ok(())
     }
 
+    /// Return a reference to the underlying writer.
+    pub fn get_ref(&self) -> &W {
+        self.wtr.as_ref().unwrap()
+    }
+
     /// Flush the contents of the internal buffer and return the underlying
     /// writer.
     pub fn into_inner(
@@ -1184,13 +1214,13 @@ impl Buffer {
 
 #[cfg(test)]
 mod tests {
-    use serde::{serde_if_integer128, Serialize};
-
     use std::io::{self, Write};
 
-    use crate::byte_record::ByteRecord;
-    use crate::error::ErrorKind;
-    use crate::string_record::StringRecord;
+    use serde::{serde_if_integer128, Serialize};
+
+    use crate::{
+        byte_record::ByteRecord, error::ErrorKind, string_record::StringRecord,
+    };
 
     use super::{Writer, WriterBuilder};
 
@@ -1411,5 +1441,14 @@ mod tests {
         let mut wtr = WriterBuilder::new().from_writer(vec![]);
         wtr.serialize((true, 1.3, "hi")).unwrap();
         assert_eq!(wtr_as_string(wtr), "true,1.3,hi\n");
+    }
+
+    #[test]
+    fn comment_char_is_automatically_quoted() {
+        let mut wtr =
+            WriterBuilder::new().comment(Some(b'#')).from_writer(Vec::new());
+        wtr.write_record(&["# comment", "another"]).unwrap();
+        let buf = wtr.into_inner().unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "\"# comment\",another\n");
     }
 }

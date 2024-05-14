@@ -12,9 +12,14 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+use core::default::Default;
+
 use crate::{
+    budget::Budget,
     cert::{self, Cert, EndEntityOrCa},
-    der, name, signed_data, time, Error, SignatureAlgorithm, TrustAnchor,
+    der, equal,
+    error::ErrorExt,
+    name, signed_data, time, Error, SignatureAlgorithm, TrustAnchor,
 };
 
 pub fn build_chain(
@@ -24,8 +29,30 @@ pub fn build_chain(
     intermediate_certs: &[&[u8]],
     cert: &Cert,
     time: time::Time,
+) -> Result<(), ErrorExt> {
+    build_chain_inner(
+        required_eku_if_present,
+        supported_sig_algs,
+        trust_anchors,
+        intermediate_certs,
+        cert,
+        time,
+        0,
+        &mut Budget::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_chain_inner(
+    required_eku_if_present: KeyPurposeId,
+    supported_sig_algs: &[&SignatureAlgorithm],
+    trust_anchors: &[TrustAnchor],
+    intermediate_certs: &[&[u8]],
+    cert: &Cert,
+    time: time::Time,
     sub_ca_count: usize,
-) -> Result<(), Error> {
+    budget: &mut Budget,
+) -> Result<(), ErrorExt> {
     let used_as_ca = used_as_ca(&cert.ee_or_ca);
 
     check_issuer_independent_properties(
@@ -43,7 +70,7 @@ pub fn build_chain(
             const MAX_SUB_CA_COUNT: usize = 6;
 
             if sub_ca_count >= MAX_SUB_CA_COUNT {
-                return Err(Error::UnknownIssuer);
+                return Err(Error::UnknownIssuer.into());
             }
         }
         UsedAsCa::No => {
@@ -55,47 +82,46 @@ pub fn build_chain(
 
     match loop_while_non_fatal_error(trust_anchors, |trust_anchor: &TrustAnchor| {
         let trust_anchor_subject = untrusted::Input::from(trust_anchor.subject);
-        if cert.issuer != trust_anchor_subject {
-            return Err(Error::UnknownIssuer);
+        if !equal(cert.issuer, trust_anchor_subject) {
+            return Err(Error::UnknownIssuer.into());
         }
-
-        let name_constraints = trust_anchor.name_constraints.map(untrusted::Input::from);
-
-        untrusted::read_all_optional(name_constraints, Error::BadDer, |value| {
-            name::check_name_constraints(value, &cert)
-        })?;
 
         let trust_anchor_spki = untrusted::Input::from(trust_anchor.spki);
 
         // TODO: check_distrust(trust_anchor_subject, trust_anchor_spki)?;
 
-        check_signatures(supported_sig_algs, cert, trust_anchor_spki)?;
+        check_signatures(supported_sig_algs, cert, trust_anchor_spki, budget)?;
+
+        check_signed_chain_name_constraints(cert, trust_anchor)?;
 
         Ok(())
     }) {
         Ok(()) => {
             return Ok(());
         }
-        Err(..) => {
+        Err(e) => {
+            if e.is_fatal() {
+                return Err(e);
+            }
             // If the error is not fatal, then keep going.
         }
     }
 
     loop_while_non_fatal_error(intermediate_certs, |cert_der| {
         let potential_issuer =
-            cert::parse_cert(untrusted::Input::from(*cert_der), EndEntityOrCa::Ca(&cert))?;
+            cert::parse_cert(untrusted::Input::from(cert_der), EndEntityOrCa::Ca(cert))?;
 
-        if potential_issuer.subject != cert.issuer {
-            return Err(Error::UnknownIssuer);
+        if !equal(potential_issuer.subject, cert.issuer) {
+            return Err(Error::UnknownIssuer.into());
         }
 
         // Prevent loops; see RFC 4158 section 5.2.
         let mut prev = cert;
         loop {
-            if potential_issuer.spki.value() == prev.spki.value()
-                && potential_issuer.subject == prev.subject
+            if equal(potential_issuer.spki.value(), prev.spki.value())
+                && equal(potential_issuer.subject, prev.subject)
             {
-                return Err(Error::UnknownIssuer);
+                return Err(Error::UnknownIssuer.into());
             }
             match &prev.ee_or_ca {
                 EndEntityOrCa::EndEntity => {
@@ -107,16 +133,13 @@ pub fn build_chain(
             }
         }
 
-        untrusted::read_all_optional(potential_issuer.name_constraints, Error::BadDer, |value| {
-            name::check_name_constraints(value, &cert)
-        })?;
-
         let next_sub_ca_count = match used_as_ca {
             UsedAsCa::No => sub_ca_count,
             UsedAsCa::Yes => sub_ca_count + 1,
         };
 
-        build_chain(
+        budget.consume_build_chain_call()?;
+        build_chain_inner(
             required_eku_if_present,
             supported_sig_algs,
             trust_anchors,
@@ -124,6 +147,7 @@ pub fn build_chain(
             &potential_issuer,
             time,
             next_sub_ca_count,
+            budget,
         )
     })
 }
@@ -132,10 +156,12 @@ fn check_signatures(
     supported_sig_algs: &[&SignatureAlgorithm],
     cert_chain: &Cert,
     trust_anchor_key: untrusted::Input,
-) -> Result<(), Error> {
+    budget: &mut Budget,
+) -> Result<(), ErrorExt> {
     let mut spki_value = trust_anchor_key;
     let mut cert = cert_chain;
     loop {
+        budget.consume_signature()?;
         signed_data::verify_signed_data(supported_sig_algs, spki_value, &cert.signed_data)?;
 
         // TODO: check revocation
@@ -143,6 +169,32 @@ fn check_signatures(
         match &cert.ee_or_ca {
             EndEntityOrCa::Ca(child_cert) => {
                 spki_value = cert.spki.value();
+                cert = child_cert;
+            }
+            EndEntityOrCa::EndEntity => {
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn check_signed_chain_name_constraints(
+    cert_chain: &Cert,
+    trust_anchor: &TrustAnchor,
+) -> Result<(), Error> {
+    let mut cert = cert_chain;
+    let mut name_constraints = trust_anchor.name_constraints.map(untrusted::Input::from);
+
+    loop {
+        untrusted::read_all_optional(name_constraints, Error::BadDer, |value| {
+            name::check_name_constraints(value, cert)
+        })?;
+
+        match &cert.ee_or_ca {
+            EndEntityOrCa::Ca(child_cert) => {
+                name_constraints = cert.name_constraints;
                 cert = child_cert;
             }
             EndEntityOrCa::EndEntity => {
@@ -302,7 +354,7 @@ fn check_eku(
         Some(input) => {
             loop {
                 let value = der::expect_tag_and_get_value(input, der::Tag::OID)?;
-                if value == required_eku_if_present.oid_value {
+                if equal(value, required_eku_if_present.oid_value) {
                     input.skip_to_end();
                     break;
                 }
@@ -322,7 +374,10 @@ fn check_eku(
             // important that id-kp-OCSPSigning is explicit so that a normal
             // end-entity certificate isn't able to sign trusted OCSP responses
             // for itself or for other certificates issued by its issuing CA.
-            if required_eku_if_present.oid_value == EKU_OCSP_SIGNING.oid_value {
+            if equal(
+                required_eku_if_present.oid_value,
+                EKU_OCSP_SIGNING.oid_value,
+            ) {
                 return Err(Error::RequiredEkuNotFound);
             }
 
@@ -333,8 +388,8 @@ fn check_eku(
 
 fn loop_while_non_fatal_error<V>(
     values: V,
-    f: impl Fn(V::Item) -> Result<(), Error>,
-) -> Result<(), Error>
+    mut f: impl FnMut(V::Item) -> Result<(), ErrorExt>,
+) -> Result<(), ErrorExt>
 where
     V: IntoIterator,
 {
@@ -343,10 +398,13 @@ where
             Ok(()) => {
                 return Ok(());
             }
-            Err(..) => {
+            Err(e) => {
+                if e.is_fatal() {
+                    return Err(e);
+                }
                 // If the error is not fatal, then keep going.
             }
         }
     }
-    Err(Error::UnknownIssuer)
+    Err(Error::UnknownIssuer.into())
 }

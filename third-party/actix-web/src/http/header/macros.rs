@@ -224,10 +224,11 @@ macro_rules! common_header {
     // List header, one or more items with "*" option
     ($(#[$attrs:meta])*($id:ident, $name:expr) => {Any / ($item:ty)+}) => {
         $(#[$attrs])*
-        #[derive(Clone, Debug, PartialEq)]
+        #[derive(Clone, Debug, PartialEq, Eq)]
         pub enum $id {
             /// Any value is a match
             Any,
+
             /// Only the listed items are a match
             Items(Vec<$item>),
         }
@@ -313,7 +314,7 @@ macro_rules! common_header {
     };
 }
 
-pub(crate) use {common_header, common_header_test_module};
-
+pub(crate) use common_header;
 #[cfg(test)]
 pub(crate) use common_header_test;
+pub(crate) use common_header_test_module;

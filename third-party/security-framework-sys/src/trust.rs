@@ -3,7 +3,7 @@ use crate::base::SecKeyRef;
 use core_foundation_sys::array::CFArrayRef;
 use core_foundation_sys::base::{Boolean, CFIndex, CFTypeID, CFTypeRef, OSStatus};
 use core_foundation_sys::date::CFDateRef;
-#[cfg(any(feature = "OSX_10_13", target_os = "ios"))]
+#[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
 use core_foundation_sys::error::CFErrorRef;
 
 pub type SecTrustResultType = u32;
@@ -16,18 +16,17 @@ pub const kSecTrustResultRecoverableTrustFailure: SecTrustResultType = 5;
 pub const kSecTrustResultFatalTrustFailure: SecTrustResultType = 6;
 pub const kSecTrustResultOtherError: SecTrustResultType = 7;
 
-
 #[cfg(target_os = "macos")]
 mod flags {
     pub type SecTrustOptionFlags = u32;
 
-    pub const kSecTrustOptionAllowExpired: SecTrustOptionFlags = 0x00000001;
-    pub const kSecTrustOptionLeafIsCA: SecTrustOptionFlags = 0x00000002;
-    pub const kSecTrustOptionFetchIssuerFromNet: SecTrustOptionFlags = 0x00000004;
-    pub const kSecTrustOptionAllowExpiredRoot: SecTrustOptionFlags = 0x00000008;
-    pub const kSecTrustOptionRequireRevPerCert: SecTrustOptionFlags= 0x00000010;
-    pub const kSecTrustOptionUseTrustSettings: SecTrustOptionFlags= 0x00000020;
-    pub const kSecTrustOptionImplicitAnchors: SecTrustOptionFlags= 0x00000040;
+    pub const kSecTrustOptionAllowExpired: SecTrustOptionFlags = 0x0000_0001;
+    pub const kSecTrustOptionLeafIsCA: SecTrustOptionFlags = 0x0000_0002;
+    pub const kSecTrustOptionFetchIssuerFromNet: SecTrustOptionFlags = 0x0000_0004;
+    pub const kSecTrustOptionAllowExpiredRoot: SecTrustOptionFlags = 0x0000_0008;
+    pub const kSecTrustOptionRequireRevPerCert: SecTrustOptionFlags = 0x0000_0010;
+    pub const kSecTrustOptionUseTrustSettings: SecTrustOptionFlags = 0x0000_0020;
+    pub const kSecTrustOptionImplicitAnchors: SecTrustOptionFlags = 0x0000_0040;
 }
 
 #[cfg(target_os = "macos")]
@@ -56,7 +55,7 @@ extern "C" {
     #[deprecated(note = "deprecated by Apple")]
     pub fn SecTrustEvaluate(trust: SecTrustRef, result: *mut SecTrustResultType) -> OSStatus;
     // it should have been OSX_10_14, but due to back-compat it can't rely on the newer feature flag
-    #[cfg(any(feature = "OSX_10_13", target_os = "ios"))]
+    #[cfg(any(feature = "OSX_10_13", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
     pub fn SecTrustEvaluateWithError(trust: SecTrustRef, error: *mut CFErrorRef) -> bool;
     pub fn SecTrustCreateWithCertificates(
         certificates: CFTypeRef,
@@ -66,13 +65,16 @@ extern "C" {
     pub fn SecTrustSetPolicies(trust: SecTrustRef, policies: CFTypeRef) -> OSStatus;
     #[cfg(target_os = "macos")]
     pub fn SecTrustSetOptions(trust: SecTrustRef, options: SecTrustOptionFlags) -> OSStatus;
-    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
     pub fn SecTrustGetNetworkFetchAllowed(trust: SecTrustRef, allowFetch: *mut Boolean) -> OSStatus;
-    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
     pub fn SecTrustSetNetworkFetchAllowed(trust: SecTrustRef, allowFetch: Boolean) -> OSStatus;
-    #[cfg(any(feature = "OSX_10_9", target_os = "ios"))]
+    #[cfg(any(feature = "OSX_10_9", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
     pub fn SecTrustSetOCSPResponse(trust: SecTrustRef, responseData: CFTypeRef) -> OSStatus;
-    #[cfg(any(feature = "OSX_10_14", target_os = "ios"))]
-    pub fn SecTrustSetSignedCertificateTimestamps(trust: SecTrustRef, sctArray: CFArrayRef) -> OSStatus;
+    #[cfg(any(feature = "OSX_10_14", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+    pub fn SecTrustSetSignedCertificateTimestamps(
+        trust: SecTrustRef,
+        sctArray: CFArrayRef,
+    ) -> OSStatus;
     pub fn SecTrustCopyPublicKey(trust: SecTrustRef) -> SecKeyRef;
 }

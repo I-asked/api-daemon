@@ -1,8 +1,11 @@
+use crate::enums::{AlertDescription, HandshakeType};
+use crate::msgs::base::{PayloadU16, PayloadU24, PayloadU8};
+
+use super::base::Payload;
 use super::codec::Reader;
-use super::enums::{AlertDescription, AlertLevel, HandshakeType};
+use super::enums::AlertLevel;
 use super::message::{Message, OpaqueMessage, PlainMessage};
 
-use std::convert::TryFrom;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -45,7 +48,7 @@ fn test_read_fuzz_corpus() {
 }
 
 #[test]
-fn can_read_safari_client_hello() {
+fn can_read_safari_client_hello_with_ip_address_in_sni_extension() {
     let _ = env_logger::Builder::new()
         .filter(None, log::LevelFilter::Trace)
         .try_init();
@@ -69,19 +72,13 @@ fn can_read_safari_client_hello() {
     let mut rd = Reader::init(bytes);
     let m = OpaqueMessage::read(&mut rd).unwrap();
     println!("m = {:?}", m);
-    assert!(Message::try_from(m.into_plain_message()).is_err());
+    Message::try_from(m.into_plain_message()).unwrap();
 }
 
 #[test]
 fn alert_is_not_handshake() {
     let m = Message::build_alert(AlertLevel::Fatal, AlertDescription::DecodeError);
     assert!(!m.is_handshake_type(HandshakeType::ClientHello));
-}
-
-#[test]
-fn alert_is_not_opaque() {
-    let m = Message::build_alert(AlertLevel::Fatal, AlertDescription::DecodeError);
-    assert!(Message::try_from(m).is_ok());
 }
 
 #[test]
@@ -99,4 +96,12 @@ fn construct_all_types() {
         let m = Message::try_from(m.into_plain_message());
         println!("m' = {:?}", m);
     }
+}
+
+#[test]
+fn debug_payload() {
+    assert_eq!("01020304", format!("{:?}", Payload(vec![1, 2, 3, 4])));
+    assert_eq!("01020304", format!("{:?}", PayloadU8(vec![1, 2, 3, 4])));
+    assert_eq!("01020304", format!("{:?}", PayloadU16(vec![1, 2, 3, 4])));
+    assert_eq!("01020304", format!("{:?}", PayloadU24(vec![1, 2, 3, 4])));
 }

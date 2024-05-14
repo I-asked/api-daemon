@@ -188,8 +188,10 @@ s! {
 
 pub const __SIZEOF_PTHREAD_CONDATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEXATTR_T: usize = 4;
+pub const __SIZEOF_PTHREAD_BARRIERATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 40;
 pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 56;
+pub const __SIZEOF_PTHREAD_BARRIER_T: usize = 32;
 
 align_const! {
     #[cfg(target_endian = "little")]
@@ -567,6 +569,7 @@ pub const SYS_pkey_mprotect: ::c_long = 5000 + 323;
 pub const SYS_pkey_alloc: ::c_long = 5000 + 324;
 pub const SYS_pkey_free: ::c_long = 5000 + 325;
 pub const SYS_statx: ::c_long = 5000 + 326;
+pub const SYS_rseq: ::c_long = 5000 + 327;
 pub const SYS_pidfd_send_signal: ::c_long = 5000 + 424;
 pub const SYS_io_uring_setup: ::c_long = 5000 + 425;
 pub const SYS_io_uring_enter: ::c_long = 5000 + 426;
@@ -586,6 +589,14 @@ pub const SYS_faccessat2: ::c_long = 5000 + 439;
 pub const SYS_process_madvise: ::c_long = 5000 + 440;
 pub const SYS_epoll_pwait2: ::c_long = 5000 + 441;
 pub const SYS_mount_setattr: ::c_long = 5000 + 442;
+pub const SYS_quotactl_fd: ::c_long = 5000 + 443;
+pub const SYS_landlock_create_ruleset: ::c_long = 5000 + 444;
+pub const SYS_landlock_add_rule: ::c_long = 5000 + 445;
+pub const SYS_landlock_restrict_self: ::c_long = 5000 + 446;
+pub const SYS_memfd_secret: ::c_long = 5000 + 447;
+pub const SYS_process_mrelease: ::c_long = 5000 + 448;
+pub const SYS_futex_waitv: ::c_long = 5000 + 449;
+pub const SYS_set_mempolicy_home_node: ::c_long = 5000 + 450;
 
 pub const SFD_CLOEXEC: ::c_int = 0x080000;
 
@@ -628,12 +639,6 @@ pub const EFD_CLOEXEC: ::c_int = 0x80000;
 pub const O_DIRECT: ::c_int = 0x8000;
 pub const O_DIRECTORY: ::c_int = 0x10000;
 pub const O_NOFOLLOW: ::c_int = 0x20000;
-
-pub const RLIMIT_NOFILE: ::__rlimit_resource_t = 5;
-pub const RLIMIT_AS: ::__rlimit_resource_t = 6;
-pub const RLIMIT_RSS: ::__rlimit_resource_t = 7;
-pub const RLIMIT_NPROC: ::__rlimit_resource_t = 8;
-pub const RLIMIT_MEMLOCK: ::__rlimit_resource_t = 9;
 
 pub const O_APPEND: ::c_int = 8;
 pub const O_CREAT: ::c_int = 256;
@@ -818,6 +823,7 @@ pub const RTLD_NOLOAD: ::c_int = 0x8;
 
 pub const MCL_CURRENT: ::c_int = 0x0001;
 pub const MCL_FUTURE: ::c_int = 0x0002;
+pub const MCL_ONFAULT: ::c_int = 0x0004;
 
 pub const SIGSTKSZ: ::size_t = 8192;
 pub const MINSIGSTKSZ: ::size_t = 2048;

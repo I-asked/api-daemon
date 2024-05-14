@@ -47,6 +47,14 @@ const DETAILS: &[Details] = &[
     s!(SIGHUP, Term),
     s!(SIGILL, Term),
     s!(SIGINT, Term),
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "macos"
+    ))]
+    s!(SIGINFO, Ignore),
     #[cfg(not(target_os = "haiku"))]
     s!(SIGIO, Ignore),
     // Can't override anyway, but...
@@ -103,7 +111,15 @@ fn restore_default(signal: c_int) -> Result<(), Error> {
     unsafe {
         // A C structure, supposed to be memset to 0 before use.
         let mut action: libc::sigaction = mem::zeroed();
-        action.sa_sigaction = libc::SIG_DFL as _;
+        #[cfg(target_os = "aix")]
+        {
+            action.sa_union.__su_sigaction = mem::transmute::<
+                usize,
+                extern "C" fn(libc::c_int, *mut libc::siginfo_t, *mut libc::c_void),
+            >(libc::SIG_DFL);
+        }
+        #[cfg(not(target_os = "aix"))]
+        { action.sa_sigaction = libc::SIG_DFL as _; }
         if libc::sigaction(signal, &action, ptr::null_mut()) == 0 {
             Ok(())
         } else {

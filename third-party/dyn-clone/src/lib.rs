@@ -2,7 +2,7 @@
 //!
 //! [github]: https://img.shields.io/badge/github-8da0cb?style=for-the-badge&labelColor=555555&logo=github
 //! [crates-io]: https://img.shields.io/badge/crates.io-fc8d62?style=for-the-badge&labelColor=555555&logo=rust
-//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K
+//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs
 //!
 //! <br>
 //!
@@ -11,10 +11,6 @@
 //! implementation of `DynClone`. Types that implement the standard library's
 //! [`std::clone::Clone`] trait are automatically usable by a `DynClone` trait
 //! object.
-//!
-//! [`DynClone`]: trait.DynClone.html
-//! [`clone_box`]: fn.clone_box.html
-//! [`std::clone::Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 //!
 //! # Example
 //!
@@ -66,41 +62,73 @@
 //!     trait_object: Box<dyn MyTrait>,
 //! }
 //! ```
+//!
+//! The `clone_trait_object!` macro expands to just the following, which you can
+//! handwrite instead if you prefer:
+//!
+//! ```
+//! # use dyn_clone::DynClone;
+//! #
+//! # trait MyTrait: DynClone {}
+//! #
+//! impl Clone for Box<dyn MyTrait> {
+//!     fn clone(&self) -> Self {
+//!         dyn_clone::clone_box(&**self)
+//!     }
+//! }
+//!
+//! // and similar for Box<dyn MyTrait + Send>, Box<dyn MyTrait + Sync>, Box<dyn MyTrait + Send + Sync>
+//! ```
 
-#![doc(html_root_url = "https://docs.rs/dyn_clone/1.0.4")]
+#![doc(html_root_url = "https://docs.rs/dyn-clone/1.0.17")]
 #![no_std]
+#![allow(
+    clippy::missing_panics_doc,
+    clippy::needless_doctest_main,
+    clippy::ptr_as_ptr
+)]
 
 extern crate alloc;
 
-use crate::sealed::{Private, Sealed};
+#[cfg(doc)]
+extern crate core as std;
 
 #[macro_use]
 mod macros;
 
+// Not public API.
 #[doc(hidden)]
-pub mod private {
-    pub use alloc::boxed::Box;
+pub mod __private {
+    #[doc(hidden)]
     pub use core::clone::Clone;
+    #[doc(hidden)]
     pub use core::marker::{Send, Sync};
+
+    #[doc(hidden)]
+    pub type Box<T> = alloc::boxed::Box<T>;
 }
 
 mod sealed {
     pub trait Sealed {}
     impl<T: Clone> Sealed for T {}
+    impl Sealed for str {}
+    impl<T: Clone> Sealed for [T] {}
     pub struct Private;
 }
 
+use crate::sealed::{Private, Sealed};
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::sync::Arc;
+
 /// This trait is implemented by any type that implements [`std::clone::Clone`].
-///
-/// [`std::clone::Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
 pub trait DynClone: Sealed {
     // Not public API
     #[doc(hidden)]
     fn __clone_box(&self, _: Private) -> *mut ();
 }
 
-use alloc::boxed::Box;
-
+/// `&T`&ensp;&mdash;&blacktriangleright;&ensp;`T`
 pub fn clone<T>(t: &T) -> T
 where
     T: DynClone,
@@ -108,6 +136,7 @@ where
     unsafe { *Box::from_raw(<T as DynClone>::__clone_box(t, Private) as *mut T) }
 }
 
+/// `&T`&ensp;&mdash;&blacktriangleright;&ensp;`Box<T>`
 pub fn clone_box<T>(t: &T) -> Box<T>
 where
     T: ?Sized + DynClone,
@@ -121,11 +150,66 @@ where
     unsafe { Box::from_raw(fat_ptr as *mut T) }
 }
 
+/// `&mut Arc<T>`&ensp;&mdash;&blacktriangleright;&ensp;`&mut T`
+pub fn arc_make_mut<T>(arc: &mut Arc<T>) -> &mut T
+where
+    T: ?Sized + DynClone,
+{
+    // Atomic. Find out whether the Arc in the argument is the single holder of
+    // a reference count (strong or weak) on the target object. If yes, it is
+    // guaranteed to remain that way throughout the rest of this function
+    // because no other threads could bump the reference count through any other
+    // Arc (because no others exist) or through this Arc (because the current
+    // thread holds an exclusive borrow of it).
+    let is_unique = Arc::get_mut(arc).is_some();
+    if !is_unique {
+        // Non-atomic.
+        let clone = Arc::from(clone_box(&**arc));
+        // Atomic. Check the reference counts again to find out whether the old
+        // object needs to be dropped. Probably not, but it can happen if all
+        // the other holders of a reference count went away during the time that
+        // the clone operation took.
+        *arc = clone;
+    }
+    // Non-atomic. TODO: replace with Arc::get_mut_unchecked when stable.
+    let ptr = Arc::as_ptr(arc) as *mut T;
+    unsafe { &mut *ptr }
+}
+
+/// `&mut Rc<T>`&ensp;&mdash;&blacktriangleright;&ensp;`&mut T`
+pub fn rc_make_mut<T>(rc: &mut Rc<T>) -> &mut T
+where
+    T: ?Sized + DynClone,
+{
+    let is_unique = Rc::get_mut(rc).is_some();
+    if !is_unique {
+        let clone = Rc::from(clone_box(&**rc));
+        *rc = clone;
+    }
+    let ptr = Rc::as_ptr(rc) as *mut T;
+    unsafe { &mut *ptr }
+}
+
 impl<T> DynClone for T
 where
     T: Clone,
 {
     fn __clone_box(&self, _: Private) -> *mut () {
-        Box::into_raw(Box::new(self.clone())) as *mut ()
+        Box::<T>::into_raw(Box::new(self.clone())) as *mut ()
+    }
+}
+
+impl DynClone for str {
+    fn __clone_box(&self, _: Private) -> *mut () {
+        Box::<str>::into_raw(Box::from(self)) as *mut ()
+    }
+}
+
+impl<T> DynClone for [T]
+where
+    T: Clone,
+{
+    fn __clone_box(&self, _: Private) -> *mut () {
+        Box::<[T]>::into_raw(self.iter().cloned().collect()) as *mut ()
     }
 }

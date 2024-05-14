@@ -464,7 +464,7 @@ impl<N, E, Ty: EdgeType, Null: Nullable<Wrapped = E>, Ix: IndexType>
     /// - `Undirected`: All edges connected to `a`.
     ///
     /// Produces an empty iterator if the node doesn't exist.<br>
-    /// Iterator element type is [`Edges<E, Ix>`](../graph/struct.Edges.html).
+    /// Iterator element type is `(NodeIndex<Ix>, NodeIndex<Ix>, &E)`.
     pub fn edges(&self, a: NodeIndex<Ix>) -> Edges<Ty, Null, Ix> {
         Edges::on_columns(a.index(), &self.node_adjacencies, self.node_capacity)
     }
@@ -556,7 +556,7 @@ impl<N, E, Null: Nullable<Wrapped = E>, Ix: IndexType> MatrixGraph<N, E, Directe
     /// - `Incoming`: All edges to `a`.
     ///
     /// Produces an empty iterator if the node `a` doesn't exist.<br>
-    /// Iterator element type is [`EdgeReference<E, Ix>`](../graph/struct.EdgeReference.html).
+    /// Iterator element type is `(NodeIndex<Ix>, NodeIndex<Ix>, &E)`.
     pub fn edges_directed(&self, a: NodeIndex<Ix>, d: Direction) -> Edges<Directed, Null, Ix> {
         if d == Outgoing {
             self.edges(a)
@@ -853,15 +853,16 @@ fn extend_flat_square_matrix<T: Default>(
     for c in (1..old_node_capacity).rev() {
         let pos = c * old_node_capacity;
         let new_pos = c * new_node_capacity;
-
         // Move the slices directly if they do not overlap with their new position
         if pos + old_node_capacity <= new_pos {
-            let old = node_adjacencies[pos..pos + old_node_capacity].as_mut_ptr();
-            let new = node_adjacencies[new_pos..new_pos + old_node_capacity].as_mut_ptr();
-
-            // SAFE: new starts at least `old_node_capacity` positions after old.
+            debug_assert!(pos + old_node_capacity < node_adjacencies.len());
+            debug_assert!(new_pos + old_node_capacity < node_adjacencies.len());
+            let ptr = node_adjacencies.as_mut_ptr();
+            // SAFETY: pos + old_node_capacity <= new_pos, so this won't overlap
             unsafe {
-                std::ptr::swap_nonoverlapping(old, new, old_node_capacity);
+                let old = ptr.add(pos);
+                let new = ptr.add(new_pos);
+                core::ptr::swap_nonoverlapping(old, new, old_node_capacity);
             }
         } else {
             for i in (0..old_node_capacity).rev() {
@@ -896,12 +897,7 @@ fn extend_lower_triangular_matrix<T: Default>(
 
 /// Grow a Vec by appending the type's default value until the `size` is reached.
 fn ensure_len<T: Default>(v: &mut Vec<T>, size: usize) {
-    if let Some(n) = size.checked_sub(v.len()) {
-        v.reserve(n);
-        for _ in 0..n {
-            v.push(T::default());
-        }
-    }
+    v.resize_with(size, T::default);
 }
 
 #[derive(Debug, Clone)]
@@ -1132,12 +1128,12 @@ impl<N, E, Ty: EdgeType, Null: Nullable<Wrapped = E>, Ix: IndexType> Visitable
     type Map = FixedBitSet;
 
     fn visit_map(&self) -> FixedBitSet {
-        FixedBitSet::with_capacity(self.node_count())
+        FixedBitSet::with_capacity(self.node_bound())
     }
 
     fn reset_map(&self, map: &mut Self::Map) {
         map.clear();
-        map.grow(self.node_count());
+        map.grow(self.node_bound());
     }
 }
 
@@ -1234,7 +1230,7 @@ impl<N, E, Ty: EdgeType, Null: Nullable<Wrapped = E>, Ix: IndexType> NodeIndexab
     for MatrixGraph<N, E, Ty, Null, Ix>
 {
     fn node_bound(&self) -> usize {
-        self.node_count()
+        self.nodes.upper_bound
     }
 
     fn to_index(&self, ix: NodeIndex<Ix>) -> usize {
@@ -1781,5 +1777,38 @@ mod tests {
 
         assert!(!g.has_edge(a, b));
         assert_eq!(g.edge_count(), 0);
+    }
+    #[test]
+    // From https://github.com/petgraph/petgraph/issues/523
+    fn test_tarjan_scc_with_removed_node() {
+        let mut g: MatrixGraph<(), ()> = MatrixGraph::new();
+
+        g.add_node(());
+        let b = g.add_node(());
+        g.add_node(());
+
+        g.remove_node(b);
+
+        assert_eq!(
+            crate::algo::tarjan_scc(&g),
+            [[node_index(0)], [node_index(2)]]
+        );
+    }
+
+    #[test]
+    // From https://github.com/petgraph/petgraph/issues/523
+    fn test_kosaraju_scc_with_removed_node() {
+        let mut g: MatrixGraph<(), ()> = MatrixGraph::new();
+
+        g.add_node(());
+        let b = g.add_node(());
+        g.add_node(());
+
+        g.remove_node(b);
+
+        assert_eq!(
+            crate::algo::kosaraju_scc(&g),
+            [[node_index(2)], [node_index(0)]]
+        );
     }
 }

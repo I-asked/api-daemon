@@ -1,12 +1,12 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use polling::Poller;
+use polling::{Events, Poller};
 
 #[test]
 fn below_ms() -> io::Result<()> {
     let poller = Poller::new()?;
-    let mut events = Vec::new();
+    let mut events = Events::new();
 
     let dur = Duration::from_micros(100);
     let margin = Duration::from_micros(500);
@@ -18,19 +18,21 @@ fn below_ms() -> io::Result<()> {
         let elapsed = now.elapsed();
 
         assert_eq!(n, 0);
-        assert!(elapsed >= dur);
+        assert!(elapsed >= dur, "{:?} < {:?}", elapsed, dur);
         lowest = lowest.min(elapsed);
     }
 
-    if cfg!(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
+    if cfg!(all(
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "freebsd",
+        ),
+        not(polling_test_poll_backend)
     )) {
         assert!(lowest < dur + margin);
     }
@@ -40,7 +42,7 @@ fn below_ms() -> io::Result<()> {
 #[test]
 fn above_ms() -> io::Result<()> {
     let poller = Poller::new()?;
-    let mut events = Vec::new();
+    let mut events = Events::new();
 
     let dur = Duration::from_micros(3_100);
     let margin = Duration::from_micros(500);
@@ -52,21 +54,23 @@ fn above_ms() -> io::Result<()> {
         let elapsed = now.elapsed();
 
         assert_eq!(n, 0);
-        assert!(elapsed >= dur);
+        assert!(elapsed >= dur, "{:?} < {:?}", elapsed, dur);
         lowest = lowest.min(elapsed);
     }
 
-    if cfg!(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "illumos",
-        target_os = "solaris",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
+    if cfg!(all(
+        any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "illumos",
+            target_os = "solaris",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "freebsd",
+        ),
+        not(polling_test_poll_backend)
     )) {
         assert!(lowest < dur + margin);
     }

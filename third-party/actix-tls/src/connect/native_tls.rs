@@ -8,20 +8,18 @@ use actix_rt::net::ActixStream;
 use actix_service::{Service, ServiceFactory};
 use actix_utils::future::{ok, Ready};
 use futures_core::future::LocalBoxFuture;
-use log::trace;
 use tokio_native_tls::{
     native_tls::TlsConnector as NativeTlsConnector, TlsConnector as AsyncNativeTlsConnector,
     TlsStream as AsyncTlsStream,
 };
+use tracing::trace;
 
 use crate::connect::{Connection, Host};
 
 pub mod reexports {
     //! Re-exports from `native-tls` and `tokio-native-tls` that are useful for connectors.
 
-    pub use tokio_native_tls::native_tls::TlsConnector;
-
-    pub use tokio_native_tls::TlsStream as AsyncTlsStream;
+    pub use tokio_native_tls::{native_tls::TlsConnector, TlsStream as AsyncTlsStream};
 }
 
 /// Connector service and factory using `native-tls`.
@@ -75,16 +73,16 @@ where
         let connector = self.connector.clone();
 
         Box::pin(async move {
-            trace!("SSL Handshake start for: {:?}", stream.hostname());
+            trace!("TLS handshake start for: {:?}", stream.hostname());
             connector
                 .connect(stream.hostname(), io)
                 .await
                 .map(|res| {
-                    trace!("SSL Handshake success: {:?}", stream.hostname());
+                    trace!("TLS handshake success: {:?}", stream.hostname());
                     stream.replace_io(res).1
                 })
                 .map_err(|e| {
-                    trace!("SSL Handshake error: {:?}", e);
+                    trace!("TLS handshake error: {:?}", e);
                     io::Error::new(io::ErrorKind::Other, format!("{}", e))
                 })
         })

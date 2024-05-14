@@ -12,37 +12,6 @@ extern "C" fn restorer() -> ! {
     unreachable!();
 }
 
-/// Change the process's working directory
-///
-/// This function will attempt to set the process's working directory to `path`, which can be
-/// either a relative, scheme relative, or absolute path.
-///
-/// On success, `Ok(0)` will be returned. On error, one of the following errors will be returned.
-///
-/// # Errors
-///
-/// * `EACCES` - permission is denied for one of the components of `path`, or `path`
-/// * `EFAULT` - `path` does not point to the process's addressible memory
-/// * `EIO` - an I/O error occurred
-/// * `ENOENT` - `path` does not exit
-/// * `ENOTDIR` - `path` is not a directory
-pub fn chdir<T: AsRef<str>>(path: T) -> Result<usize> {
-    unsafe { syscall2(SYS_CHDIR, path.as_ref().as_ptr() as usize, path.as_ref().len()) }
-}
-
-#[deprecated(
-    since = "0.1.55",
-    note = "use fchmod instead"
-)]
-pub fn chmod<T: AsRef<str>>(path: T, mode: usize) -> Result<usize> {
-    unsafe { syscall3(SYS_CHMOD, path.as_ref().as_ptr() as usize, path.as_ref().len(), mode) }
-}
-
-/// Produce a fork of the current process, or a new process thread
-pub unsafe fn clone(flags: CloneFlags) -> Result<usize> {
-    syscall1(SYS_CLONE, flags.bits())
-}
-
 /// Close a file
 pub fn close(fd: usize) -> Result<usize> {
     unsafe { syscall1(SYS_CLOSE, fd) }
@@ -83,11 +52,6 @@ pub fn fchown(fd: usize, uid: u32, gid: u32) -> Result<usize> {
 /// Change file descriptor flags
 pub fn fcntl(fd: usize, cmd: usize, arg: usize) -> Result<usize> {
     unsafe { syscall3(SYS_FCNTL, fd, cmd, arg) }
-}
-
-/// Replace the current process with a new executable
-pub fn fexec(fd: usize, args: &[[usize; 2]], vars: &[[usize; 2]]) -> Result<usize> {
-    unsafe { syscall5(SYS_FEXEC, fd, args.as_ptr() as usize, args.len(), vars.as_ptr() as usize, vars.len()) }
 }
 
 /// Map a file into memory, but with the ability to set the address to map into, either as a hint
@@ -148,11 +112,6 @@ pub fn futimens(fd: usize, times: &[TimeSpec]) -> Result<usize> {
 pub unsafe fn futex(addr: *mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32)
                     -> Result<usize> {
     syscall5(SYS_FUTEX, addr as usize, op, (val as isize) as usize, val2, addr2 as usize)
-}
-
-/// Get the current working directory
-pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
-    unsafe { syscall2(SYS_GETCWD, buf.as_mut_ptr() as usize, buf.len()) }
 }
 
 /// Get the effective group ID
@@ -246,80 +205,6 @@ pub fn open<T: AsRef<str>>(path: T, flags: usize) -> Result<usize> {
     unsafe { syscall3(SYS_OPEN, path.as_ref().as_ptr() as usize, path.as_ref().len(), flags) }
 }
 
-/// Allocate frames, linearly in physical memory.
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-/// * `ENOMEM` - the system has run out of available memory
-pub unsafe fn physalloc(size: usize) -> Result<usize> {
-    syscall1(SYS_PHYSALLOC, size)
-}
-
-/// Allocate frames, linearly in physical memory, with an extra set of flags. If the flags contain
-/// [`PARTIAL_ALLOC`], this will result in `physalloc3` with `min = 1`.
-///
-/// Refer to the simpler [`physalloc`] and the more complex [`physalloc3`], that this convenience
-/// function is based on.
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-/// * `ENOMEM` - the system has run out of available memory
-pub unsafe fn physalloc2(size: usize, flags: usize) -> Result<usize> {
-    let mut ret = 1usize;
-    physalloc3(size, flags, &mut ret)
-}
-
-/// Allocate frames, linearly in physical memory, with an extra set of flags. If the flags contain
-/// [`PARTIAL_ALLOC`], the `min` parameter specifies the number of frames that have to be allocated
-/// for this operation to succeed. The return value is the offset of the first frame, and `min` is
-/// overwritten with the number of frames actually allocated.
-///
-/// Refer to the simpler [`physalloc`] and the simpler library function [`physalloc2`].
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-/// * `ENOMEM` - the system has run out of available memory
-/// * `EINVAL` - `min = 0`
-pub unsafe fn physalloc3(size: usize, flags: usize, min: &mut usize) -> Result<usize> {
-    syscall3(SYS_PHYSALLOC3, size, flags, min as *mut usize as usize)
-}
-
-/// Free physically allocated pages
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-pub unsafe fn physfree(physical_address: usize, size: usize) -> Result<usize> {
-    syscall2(SYS_PHYSFREE, physical_address, size)
-}
-
-/// Map physical memory to virtual memory
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-pub unsafe fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
-    syscall3(SYS_PHYSMAP, physical_address, size, flags.bits())
-}
-
-/// Unmap previously mapped physical memory
-///
-/// # Errors
-///
-/// * `EPERM` - `uid != 0`
-/// * `EFAULT` - `virtual_address` has not been mapped
-pub unsafe fn physunmap(virtual_address: usize) -> Result<usize> {
-    syscall1(SYS_PHYSUNMAP, virtual_address)
-}
-
-/// Create a pair of file descriptors referencing the read and write ends of a pipe
-pub fn pipe2(fds: &mut [usize; 2], flags: usize) -> Result<usize> {
-    unsafe { syscall2(SYS_PIPE2, fds.as_ptr() as usize, flags) }
-}
-
 /// Read from a file descriptor into a buffer
 pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_READ, fd, buf.as_mut_ptr() as usize, buf.len()) }
@@ -359,7 +244,7 @@ pub fn sigaction(sig: usize, act: Option<&SigAction>, oldact: Option<&mut SigAct
 }
 
 /// Get and/or set signal masks
-pub fn sigprocmask(how: usize, set: Option<&[u64; 2]>, oldset: Option<&mut [u64; 2]>) -> Result<usize> {
+pub fn sigprocmask(how: usize, set: Option<&u64>, oldset: Option<&mut u64>) -> Result<usize> {
     unsafe { syscall3(SYS_SIGPROCMASK, how,
                       set.map(|x| x as *const _).unwrap_or_else(ptr::null) as usize,
                       oldset.map(|x| x as *mut _).unwrap_or_else(ptr::null_mut) as usize) }
@@ -417,4 +302,20 @@ pub fn write(fd: usize, buf: &[u8]) -> Result<usize> {
 /// This function will return Ok(0) on success
 pub fn sched_yield() -> Result<usize> {
     unsafe { syscall0(SYS_YIELD) }
+}
+
+/// Send a file descriptor `fd`, handled by the scheme providing `receiver_socket`. `flags` is
+/// currently unused (must be zero), and `arg` is included in the scheme call.
+///
+/// The scheme can return an arbitrary value.
+pub fn sendfd(receiver_socket: usize, fd: usize, flags: usize, arg: u64) -> Result<usize> {
+    #[cfg(target_pointer_width = "32")]
+    unsafe {
+        syscall5(SYS_SENDFD, receiver_socket, fd, flags, arg as u32 as usize, (arg >> 32) as u32 as usize)
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    unsafe {
+        syscall4(SYS_SENDFD, receiver_socket, fd, flags, arg as usize)
+    }
 }

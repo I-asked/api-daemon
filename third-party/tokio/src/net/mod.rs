@@ -23,8 +23,10 @@
 //! [`UnixDatagram`]: UnixDatagram
 
 mod addr;
-#[cfg(feature = "net")]
-pub(crate) use addr::to_socket_addrs;
+cfg_not_wasi! {
+    #[cfg(feature = "net")]
+    pub(crate) use addr::to_socket_addrs;
+}
 pub use addr::ToSocketAddrs;
 
 cfg_net! {
@@ -33,11 +35,13 @@ cfg_net! {
 
     pub mod tcp;
     pub use tcp::listener::TcpListener;
-    pub use tcp::socket::TcpSocket;
     pub use tcp::stream::TcpStream;
+    cfg_not_wasi! {
+        pub use tcp::socket::TcpSocket;
 
-    mod udp;
-    pub use udp::UdpSocket;
+        mod udp;
+        pub use udp::UdpSocket;
+    }
 }
 
 cfg_net_unix! {
@@ -45,6 +49,7 @@ cfg_net_unix! {
     pub use unix::datagram::socket::UnixDatagram;
     pub use unix::listener::UnixListener;
     pub use unix::stream::UnixStream;
+    pub use unix::socket::UnixSocket;
 }
 
 cfg_net_windows! {

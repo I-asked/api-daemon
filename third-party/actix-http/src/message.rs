@@ -3,7 +3,7 @@ use std::{cell::RefCell, ops, rc::Rc};
 use bitflags::bitflags;
 
 /// Represents various types of connection
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionType {
     /// Close connection after response.
     Close,
@@ -16,6 +16,7 @@ pub enum ConnectionType {
 }
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     pub(crate) struct Flags: u8 {
         const CLOSE       = 0b0000_0001;
         const KEEP_ALIVE  = 0b0000_0010;

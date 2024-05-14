@@ -176,6 +176,9 @@ mod helper_with;
 #[cfg(feature = "script_helper")]
 pub(crate) mod scripting;
 
+#[cfg(feature = "string_helpers")]
+pub(crate) mod string_helpers;
+
 // pub type HelperDef = for <'a, 'b, 'c> Fn<(&'a Context, &'b Helper, &'b Registry, &'c mut RenderContext), Result<String, RenderError>>;
 //
 // pub fn helper_dummy (ctx: &Context, h: &Helper, r: &Registry, rc: &mut RenderContext) -> Result<String, RenderError> {
@@ -208,15 +211,11 @@ mod test {
         ) -> Result<(), RenderError> {
             let v = h.param(0).unwrap();
 
-            if !h.is_block() {
-                let output = format!("{}:{}", h.name(), v.value().render());
-                out.write(output.as_ref())?;
-            } else {
-                let output = format!("{}:{}", h.name(), v.value().render());
-                out.write(output.as_ref())?;
+            write!(out, "{}:{}", h.name(), v.value().render())?;
+            if h.is_block() {
                 out.write("->")?;
                 h.template().unwrap().render(r, ctx, rc, out)?;
-            };
+            }
             Ok(())
         }
     }
@@ -258,8 +257,7 @@ mod test {
                  _: &mut RenderContext<'_, '_>,
                  out: &mut dyn Output|
                  -> Result<(), RenderError> {
-                    let output = format!("{}{}", h.name(), h.param(0).unwrap().value());
-                    out.write(output.as_ref())?;
+                    write!(out, "{}{}", h.name(), h.param(0).unwrap().value())?;
                     Ok(())
                 },
             ),
@@ -273,8 +271,7 @@ mod test {
                  _: &mut RenderContext<'_, '_>,
                  out: &mut dyn Output|
                  -> Result<(), RenderError> {
-                    let output = format!("{}", h.hash_get("value").unwrap().value().render());
-                    out.write(output.as_ref())?;
+                    write!(out, "{}", h.hash_get("value").unwrap().value().render())?;
                     Ok(())
                 },
             ),

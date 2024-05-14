@@ -23,15 +23,21 @@
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(clippy::needless_borrow)] // suggest code that doesn't work on MSRV
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
-// TODO: These hidden re-exports are deprecated and should eventually be removed.
 #[cfg(feature = "std")]
-#[doc(hidden)]
+#[doc(no_inline)]
 pub use crate::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite,
     AsyncWriteExt,
 };
-#[doc(hidden)]
+#[doc(no_inline)]
 pub use crate::{
     future::{Future, FutureExt},
     stream::{Stream, StreamExt},

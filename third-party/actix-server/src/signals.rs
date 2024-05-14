@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use log::trace;
+use tracing::trace;
 
 /// Types of process signals.
 // #[allow(dead_code)]
@@ -69,8 +69,8 @@ impl Signals {
                     unix::signal(*kind)
                         .map(|tokio_sig| (*sig, tokio_sig))
                         .map_err(|e| {
-                            log::error!(
-                                "Can not initialize stream handler for {:?} err: {}",
+                            tracing::error!(
+                                "can not initialize stream handler for {:?} err: {}",
                                 sig,
                                 e
                             )
@@ -96,7 +96,7 @@ impl Future for Signals {
         #[cfg(unix)]
         {
             for (sig, fut) in self.signals.iter_mut() {
-                if Pin::new(fut).poll_recv(cx).is_ready() {
+                if fut.poll_recv(cx).is_ready() {
                     trace!("{} received", sig);
                     return Poll::Ready(*sig);
                 }

@@ -192,6 +192,41 @@ s! {
         pub l_len: ::off64_t,
         pub l_pid: ::pid_t,
     }
+
+    pub struct user_regs_struct {
+        pub pc: ::c_ulong,
+        pub ra: ::c_ulong,
+        pub sp: ::c_ulong,
+        pub gp: ::c_ulong,
+        pub tp: ::c_ulong,
+        pub t0: ::c_ulong,
+        pub t1: ::c_ulong,
+        pub t2: ::c_ulong,
+        pub s0: ::c_ulong,
+        pub s1: ::c_ulong,
+        pub a0: ::c_ulong,
+        pub a1: ::c_ulong,
+        pub a2: ::c_ulong,
+        pub a3: ::c_ulong,
+        pub a4: ::c_ulong,
+        pub a5: ::c_ulong,
+        pub a6: ::c_ulong,
+        pub a7: ::c_ulong,
+        pub s2: ::c_ulong,
+        pub s3: ::c_ulong,
+        pub s4: ::c_ulong,
+        pub s5: ::c_ulong,
+        pub s6: ::c_ulong,
+        pub s7: ::c_ulong,
+        pub s8: ::c_ulong,
+        pub s9: ::c_ulong,
+        pub s10: ::c_ulong,
+        pub s11: ::c_ulong,
+        pub t3: ::c_ulong,
+        pub t4: ::c_ulong,
+        pub t5: ::c_ulong,
+        pub t6: ::c_ulong,
+    }
 }
 
 pub const POSIX_FADV_DONTNEED: ::c_int = 4;
@@ -200,11 +235,6 @@ pub const VEOF: usize = 4;
 pub const RTLD_DEEPBIND: ::c_int = 0x8;
 pub const RTLD_GLOBAL: ::c_int = 0x100;
 pub const RTLD_NOLOAD: ::c_int = 0x4;
-pub const RLIMIT_RSS: ::__rlimit_resource_t = 5;
-pub const RLIMIT_AS: ::__rlimit_resource_t = 9;
-pub const RLIMIT_MEMLOCK: ::__rlimit_resource_t = 8;
-pub const RLIMIT_NOFILE: ::__rlimit_resource_t = 7;
-pub const RLIMIT_NPROC: ::__rlimit_resource_t = 6;
 pub const O_APPEND: ::c_int = 1024;
 pub const O_CREAT: ::c_int = 64;
 pub const O_EXCL: ::c_int = 128;
@@ -373,6 +403,7 @@ pub const EPOLL_CLOEXEC: ::c_int = 524288;
 pub const EFD_CLOEXEC: ::c_int = 524288;
 pub const __SIZEOF_PTHREAD_CONDATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEXATTR_T: usize = 4;
+pub const __SIZEOF_PTHREAD_BARRIERATTR_T: usize = 4;
 pub const O_DIRECT: ::c_int = 16384;
 pub const O_DIRECTORY: ::c_int = 65536;
 pub const O_NOFOLLOW: ::c_int = 131072;
@@ -401,6 +432,7 @@ pub const PTRACE_GETREGS: ::c_uint = 12;
 pub const PTRACE_SETREGS: ::c_uint = 13;
 pub const MCL_CURRENT: ::c_int = 1;
 pub const MCL_FUTURE: ::c_int = 2;
+pub const MCL_ONFAULT: ::c_int = 4;
 pub const SIGSTKSZ: ::size_t = 8192;
 pub const MINSIGSTKSZ: ::size_t = 2048;
 pub const CBAUD: ::tcflag_t = 4111;
@@ -496,6 +528,7 @@ pub const FLUSHO: ::tcflag_t = 4096;
 pub const EXTPROC: ::tcflag_t = 65536;
 pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 40;
 pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 56;
+pub const __SIZEOF_PTHREAD_BARRIER_T: usize = 32;
 pub const NGREG: usize = 32;
 pub const REG_PC: usize = 0;
 pub const REG_RA: usize = 1;
@@ -506,6 +539,14 @@ pub const REG_S1: usize = 9;
 pub const REG_A0: usize = 10;
 pub const REG_S2: usize = 18;
 pub const REG_NARGS: usize = 8;
+
+pub const COMPAT_HWCAP_ISA_I: ::c_ulong = 1 << (b'I' - b'A');
+pub const COMPAT_HWCAP_ISA_M: ::c_ulong = 1 << (b'M' - b'A');
+pub const COMPAT_HWCAP_ISA_A: ::c_ulong = 1 << (b'A' - b'A');
+pub const COMPAT_HWCAP_ISA_F: ::c_ulong = 1 << (b'F' - b'A');
+pub const COMPAT_HWCAP_ISA_D: ::c_ulong = 1 << (b'D' - b'A');
+pub const COMPAT_HWCAP_ISA_C: ::c_ulong = 1 << (b'C' - b'A');
+pub const COMPAT_HWCAP_ISA_V: ::c_ulong = 1 << (b'V' - b'A');
 
 pub const SYS_read: ::c_long = 63;
 pub const SYS_write: ::c_long = 64;
@@ -782,6 +823,7 @@ pub const SYS_pkey_mprotect: ::c_long = 288;
 pub const SYS_pkey_alloc: ::c_long = 289;
 pub const SYS_pkey_free: ::c_long = 290;
 pub const SYS_statx: ::c_long = 291;
+pub const SYS_rseq: ::c_long = 293;
 pub const SYS_pidfd_send_signal: ::c_long = 424;
 pub const SYS_io_uring_setup: ::c_long = 425;
 pub const SYS_io_uring_enter: ::c_long = 426;
@@ -801,6 +843,14 @@ pub const SYS_faccessat2: ::c_long = 439;
 pub const SYS_process_madvise: ::c_long = 440;
 pub const SYS_epoll_pwait2: ::c_long = 441;
 pub const SYS_mount_setattr: ::c_long = 442;
+pub const SYS_quotactl_fd: ::c_long = 443;
+pub const SYS_landlock_create_ruleset: ::c_long = 444;
+pub const SYS_landlock_add_rule: ::c_long = 445;
+pub const SYS_landlock_restrict_self: ::c_long = 446;
+pub const SYS_memfd_secret: ::c_long = 447;
+pub const SYS_process_mrelease: ::c_long = 448;
+pub const SYS_futex_waitv: ::c_long = 449;
+pub const SYS_set_mempolicy_home_node: ::c_long = 450;
 
 cfg_if! {
     if #[cfg(libc_align)] {

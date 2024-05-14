@@ -1,18 +1,21 @@
+mod common;
+
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 use std::thread;
 
 use async_lock::Mutex;
 use futures_lite::future;
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_test::*;
+use common::check_yields_when_contended;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
+#[cfg(target_family = "wasm")]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn smoke() {
     future::block_on(async {
         let m = Mutex::new(());
@@ -21,29 +24,42 @@ fn smoke() {
     })
 }
 
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+fn smoke_blocking() {
+    let m = Mutex::new(());
+    drop(m.lock_blocking());
+    drop(m.lock_blocking());
+}
+
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
+#[test]
+fn smoke_arc_blocking() {
+    let m = Arc::new(Mutex::new(()));
+    drop(m.lock_arc_blocking());
+    drop(m.lock_arc_blocking());
+}
+
+#[test]
 fn try_lock() {
     let m = Mutex::new(());
     *m.try_lock().unwrap() = ();
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn into_inner() {
     let m = Mutex::new(10i32);
     assert_eq!(m.into_inner(), 10);
 }
 
 #[test]
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 fn get_mut() {
     let mut m = Mutex::new(10i32);
     *m.get_mut() = 20;
     assert_eq!(m.into_inner(), 20);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 #[test]
 fn contention() {
     future::block_on(async {
@@ -83,4 +99,13 @@ fn lifetime() {
         let mutex = Arc::new(Mutex::new(0i32));
         mutex.lock_arc()
     };
+}
+
+#[test]
+fn yields_when_contended() {
+    let m = Mutex::new(());
+    check_yields_when_contended(m.try_lock().unwrap(), m.lock());
+
+    let m = Arc::new(m);
+    check_yields_when_contended(m.try_lock_arc().unwrap(), m.lock_arc());
 }

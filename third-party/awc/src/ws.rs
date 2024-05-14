@@ -6,7 +6,7 @@
 //!
 //! ```no_run
 //! use awc::{Client, ws};
-//! use futures_util::{sink::SinkExt as _, stream::StreamExt as _};
+//! use futures_util::{SinkExt as _, StreamExt as _};
 //!
 //! #[actix_rt::main]
 //! async fn main() {
@@ -26,15 +26,17 @@
 //! }
 //! ```
 
-use std::{convert::TryFrom, fmt, net::SocketAddr, str};
+use std::{fmt, net::SocketAddr, str};
 
 use actix_codec::Framed;
+pub use actix_http::ws::{CloseCode, CloseReason, Codec, Frame, Message};
 use actix_http::{ws, Payload, RequestHead};
 use actix_rt::time::timeout;
 use actix_service::Service as _;
+use base64::prelude::*;
 
-pub use actix_http::ws::{CloseCode, CloseReason, Codec, Frame, Message};
-
+#[cfg(feature = "cookies")]
+use crate::cookie::{Cookie, CookieJar};
 use crate::{
     client::ClientConfig,
     connect::{BoxedSocket, ConnectRequest},
@@ -45,9 +47,6 @@ use crate::{
     },
     ClientResponse,
 };
-
-#[cfg(feature = "cookies")]
-use crate::cookie::{Cookie, CookieJar};
 
 /// WebSocket connection.
 pub struct WebsocketsRequest {
@@ -65,7 +64,7 @@ pub struct WebsocketsRequest {
 }
 
 impl WebsocketsRequest {
-    /// Create new WebSocket connection
+    /// Create new WebSocket connection.
     pub(crate) fn new<U>(uri: U, config: ClientConfig) -> Self
     where
         Uri: TryFrom<U>,
@@ -83,7 +82,7 @@ impl WebsocketsRequest {
 
         match Uri::try_from(uri) {
             Ok(uri) => head.uri = uri,
-            Err(e) => err = Some(e.into()),
+            Err(error) => err = Some(error.into()),
         }
 
         WebsocketsRequest {
@@ -144,7 +143,7 @@ impl WebsocketsRequest {
     {
         match HeaderValue::try_from(origin) {
             Ok(value) => self.origin = Some(value),
-            Err(e) => self.err = Some(e.into()),
+            Err(err) => self.err = Some(err.into()),
         }
         self
     }
@@ -178,9 +177,9 @@ impl WebsocketsRequest {
                 Ok(value) => {
                     self.head.headers.append(key, value);
                 }
-                Err(e) => self.err = Some(e.into()),
+                Err(err) => self.err = Some(err.into()),
             },
-            Err(e) => self.err = Some(e.into()),
+            Err(err) => self.err = Some(err.into()),
         }
         self
     }
@@ -197,9 +196,9 @@ impl WebsocketsRequest {
                 Ok(value) => {
                     self.head.headers.insert(key, value);
                 }
-                Err(e) => self.err = Some(e.into()),
+                Err(err) => self.err = Some(err.into()),
             },
-            Err(e) => self.err = Some(e.into()),
+            Err(err) => self.err = Some(err.into()),
         }
         self
     }
@@ -218,11 +217,11 @@ impl WebsocketsRequest {
                         Ok(value) => {
                             self.head.headers.insert(key, value);
                         }
-                        Err(e) => self.err = Some(e.into()),
+                        Err(err) => self.err = Some(err.into()),
                     }
                 }
             }
-            Err(e) => self.err = Some(e.into()),
+            Err(err) => self.err = Some(err.into()),
         }
         self
     }
@@ -236,7 +235,10 @@ impl WebsocketsRequest {
             Some(password) => format!("{}:{}", username, password),
             None => format!("{}:", username),
         };
-        self.header(AUTHORIZATION, format!("Basic {}", base64::encode(&auth)))
+        self.header(
+            AUTHORIZATION,
+            format!("Basic {}", BASE64_STANDARD.encode(auth)),
+        )
     }
 
     /// Set HTTP bearer authentication header
@@ -321,7 +323,7 @@ impl WebsocketsRequest {
         // Generate a random key for the `Sec-WebSocket-Key` header which is a base64-encoded
         // (see RFC 4648 §4) value that, when decoded, is 16 bytes in length (RFC 6455 §1.3).
         let sec_key: [u8; 16] = rand::random();
-        let key = base64::encode(&sec_key);
+        let key = BASE64_STANDARD.encode(sec_key);
 
         self.head.headers.insert(
             header::SEC_WEBSOCKET_KEY,
@@ -503,6 +505,8 @@ mod tests {
                 .unwrap(),
             "Bearer someS3cr3tAutht0k3n"
         );
+
+        #[allow(clippy::let_underscore_future)]
         let _ = req.connect();
     }
 
@@ -513,7 +517,7 @@ mod tests {
             .origin("test-origin")
             .max_frame_size(100)
             .server_mode()
-            .protocols(&["v1", "v2"])
+            .protocols(["v1", "v2"])
             .set_header_if_none(header::CONTENT_TYPE, "json")
             .set_header_if_none(header::CONTENT_TYPE, "text")
             .cookie(Cookie::build("cookie1", "value1").finish());

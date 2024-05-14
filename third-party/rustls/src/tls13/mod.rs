@@ -1,18 +1,18 @@
 use crate::cipher::{make_nonce, Iv, MessageDecrypter, MessageEncrypter};
-use crate::error::Error;
+use crate::enums::ContentType;
+use crate::enums::{CipherSuite, ProtocolVersion};
+use crate::error::{Error, PeerMisbehaved};
 use crate::msgs::base::Payload;
 use crate::msgs::codec::Codec;
-use crate::msgs::enums::{CipherSuite, ContentType, ProtocolVersion};
 use crate::msgs::fragmenter::MAX_FRAGMENT_LEN;
 use crate::msgs::message::{BorrowedPlainMessage, OpaqueMessage, PlainMessage};
 use crate::suites::{BulkAlgorithm, CipherSuiteCommon, SupportedCipherSuite};
 
-use ring::{aead, hkdf};
+use ring::aead;
 
 use std::fmt;
 
 pub(crate) mod key_schedule;
-use key_schedule::{derive_traffic_iv, derive_traffic_key};
 
 /// The TLS1.3 ciphersuite TLS_CHACHA20_POLY1305_SHA256
 pub static TLS13_CHACHA20_POLY1305_SHA256: SupportedCipherSuite =
@@ -22,7 +22,7 @@ pub(crate) static TLS13_CHACHA20_POLY1305_SHA256_INTERNAL: &Tls13CipherSuite = &
     common: CipherSuiteCommon {
         suite: CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
         bulk: BulkAlgorithm::Chacha20Poly1305,
-        aead_algorithm: &ring::aead::CHACHA20_POLY1305,
+        aead_algorithm: &aead::CHACHA20_POLY1305,
     },
     hkdf_algorithm: ring::hkdf::HKDF_SHA256,
     #[cfg(feature = "quic")]
@@ -37,7 +37,7 @@ pub static TLS13_AES_256_GCM_SHA384: SupportedCipherSuite =
         common: CipherSuiteCommon {
             suite: CipherSuite::TLS13_AES_256_GCM_SHA384,
             bulk: BulkAlgorithm::Aes256Gcm,
-            aead_algorithm: &ring::aead::AES_256_GCM,
+            aead_algorithm: &aead::AES_256_GCM,
         },
         hkdf_algorithm: ring::hkdf::HKDF_SHA384,
         #[cfg(feature = "quic")]
@@ -54,7 +54,7 @@ pub(crate) static TLS13_AES_128_GCM_SHA256_INTERNAL: &Tls13CipherSuite = &Tls13C
     common: CipherSuiteCommon {
         suite: CipherSuite::TLS13_AES_128_GCM_SHA256,
         bulk: BulkAlgorithm::Aes128Gcm,
-        aead_algorithm: &ring::aead::AES_128_GCM,
+        aead_algorithm: &aead::AES_128_GCM,
     },
     hkdf_algorithm: ring::hkdf::HKDF_SHA256,
     #[cfg(feature = "quic")]
@@ -75,30 +75,8 @@ pub struct Tls13CipherSuite {
 }
 
 impl Tls13CipherSuite {
-    pub(crate) fn derive_encrypter(&self, secret: &hkdf::Prk) -> Box<dyn MessageEncrypter> {
-        let key = derive_traffic_key(secret, self.common.aead_algorithm);
-        let iv = derive_traffic_iv(secret);
-
-        Box::new(Tls13MessageEncrypter {
-            enc_key: aead::LessSafeKey::new(key),
-            iv,
-        })
-    }
-
-    /// Derive a `MessageDecrypter` object from the concerned TLS 1.3
-    /// cipher suite.
-    pub fn derive_decrypter(&self, secret: &hkdf::Prk) -> Box<dyn MessageDecrypter> {
-        let key = derive_traffic_key(secret, self.common.aead_algorithm);
-        let iv = derive_traffic_iv(secret);
-
-        Box::new(Tls13MessageDecrypter {
-            dec_key: aead::LessSafeKey::new(key),
-            iv,
-        })
-    }
-
     /// Which hash function to use with this suite.
-    pub fn hash_algorithm(&self) -> &'static ring::digest::Algorithm {
+    pub(crate) fn hash_algorithm(&self) -> &'static ring::digest::Algorithm {
         self.hkdf_algorithm
             .hmac_algorithm()
             .digest_algorithm()
@@ -106,7 +84,7 @@ impl Tls13CipherSuite {
 
     /// Can a session using suite self resume from suite prev?
     pub fn can_resume_from(&self, prev: &'static Self) -> Option<&'static Self> {
-        (prev.hash_algorithm() == self.hash_algorithm()).then(|| prev)
+        (prev.hash_algorithm() == self.hash_algorithm()).then_some(prev)
     }
 }
 
@@ -151,8 +129,8 @@ fn unpad_tls13(v: &mut Vec<u8>) -> ContentType {
     }
 }
 
-fn make_tls13_aad(len: usize) -> ring::aead::Aad<[u8; TLS13_AAD_SIZE]> {
-    ring::aead::Aad::from([
+fn make_tls13_aad(len: usize) -> aead::Aad<[u8; TLS13_AAD_SIZE]> {
+    aead::Aad::from([
         0x17, // ContentType::ApplicationData
         0x3,  // ProtocolVersion (major)
         0x3,  // ProtocolVersion (minor)
@@ -209,8 +187,7 @@ impl MessageDecrypter for Tls13MessageDecrypter {
 
         msg.typ = unpad_tls13(payload);
         if msg.typ == ContentType::Unknown(0) {
-            let msg = "peer sent bad TLSInnerPlaintext".to_string();
-            return Err(Error::PeerMisbehavedError(msg));
+            return Err(PeerMisbehaved::IllegalTlsInnerPlaintext.into());
         }
 
         if payload.len() > MAX_FRAGMENT_LEN {

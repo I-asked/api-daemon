@@ -1,3 +1,15 @@
+# Version 2.2.0
+
+- Implement `From<Unparker>` for `Waker`. This enables `Waker`s to be constructed from `Unparker`s without allocating. (#18)
+
+# Version 2.1.1
+
+- Update docs with new logo. (#14)
+
+# Version 2.1.0
+
+- Add will_unpark and same_parker methods to Unparker. (#10)
+
 # Version 2.0.0
 
 - Return `bool` from `unpark()` methods.

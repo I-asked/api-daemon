@@ -1,4 +1,4 @@
-use crate::primitive::sync::atomic;
+use crate::primitive::hint;
 use core::cell::Cell;
 use core::fmt;
 
@@ -145,10 +145,7 @@ impl Backoff {
     #[inline]
     pub fn spin(&self) {
         for _ in 0..1 << self.step.get().min(SPIN_LIMIT) {
-            // TODO(taiki-e): once we bump the minimum required Rust version to 1.49+,
-            // use [`core::hint::spin_loop`] instead.
-            #[allow(deprecated)]
-            atomic::spin_loop_hint();
+            hint::spin_loop();
         }
 
         if self.step.get() <= SPIN_LIMIT {
@@ -201,6 +198,7 @@ impl Backoff {
     /// assert_eq!(ready.load(SeqCst), false);
     /// spin_wait(&ready);
     /// assert_eq!(ready.load(SeqCst), true);
+    /// # std::thread::sleep(std::time::Duration::from_millis(500)); // wait for background threads closed: https://github.com/rust-lang/miri/issues/1371
     /// ```
     ///
     /// [`AtomicBool`]: std::sync::atomic::AtomicBool
@@ -208,18 +206,12 @@ impl Backoff {
     pub fn snooze(&self) {
         if self.step.get() <= SPIN_LIMIT {
             for _ in 0..1 << self.step.get() {
-                // TODO(taiki-e): once we bump the minimum required Rust version to 1.49+,
-                // use [`core::hint::spin_loop`] instead.
-                #[allow(deprecated)]
-                atomic::spin_loop_hint();
+                hint::spin_loop();
             }
         } else {
             #[cfg(not(feature = "std"))]
             for _ in 0..1 << self.step.get() {
-                // TODO(taiki-e): once we bump the minimum required Rust version to 1.49+,
-                // use [`core::hint::spin_loop`] instead.
-                #[allow(deprecated)]
-                atomic::spin_loop_hint();
+                hint::spin_loop();
             }
 
             #[cfg(feature = "std")]
@@ -269,6 +261,7 @@ impl Backoff {
     /// assert_eq!(ready.load(SeqCst), false);
     /// blocking_wait(&ready);
     /// assert_eq!(ready.load(SeqCst), true);
+    /// # std::thread::sleep(std::time::Duration::from_millis(500)); // wait for background threads closed: https://github.com/rust-lang/miri/issues/1371
     /// ```
     ///
     /// [`AtomicBool`]: std::sync::atomic::AtomicBool

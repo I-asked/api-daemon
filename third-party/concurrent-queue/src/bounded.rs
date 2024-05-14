@@ -1,11 +1,13 @@
-use std::cell::UnsafeCell;
-use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread;
+use alloc::{boxed::Box, vec::Vec};
+use core::mem::MaybeUninit;
 
-use cache_padded::CachePadded;
+use crossbeam_utils::CachePadded;
 
-use crate::{PopError, PushError};
+use crate::sync::atomic::{AtomicUsize, Ordering};
+use crate::sync::cell::UnsafeCell;
+#[allow(unused_imports)]
+use crate::sync::prelude::*;
+use crate::{busy_wait, ForcePushError, PopError, PushError};
 
 /// A slot in a queue.
 struct Slot<T> {
@@ -81,6 +83,74 @@ impl<T> Bounded<T> {
 
     /// Attempts to push an item into the queue.
     pub fn push(&self, value: T) -> Result<(), PushError<T>> {
+        self.push_or_else(value, |value, tail, _, _| {
+            let head = self.head.load(Ordering::Relaxed);
+
+            // If the head lags one lap behind the tail as well...
+            if head.wrapping_add(self.one_lap) == tail {
+                // ...then the queue is full.
+                Err(PushError::Full(value))
+            } else {
+                Ok(value)
+            }
+        })
+    }
+
+    /// Pushes an item into the queue, displacing another item if needed.
+    pub fn force_push(&self, value: T) -> Result<Option<T>, ForcePushError<T>> {
+        let result = self.push_or_else(value, |value, tail, new_tail, slot| {
+            let head = tail.wrapping_sub(self.one_lap);
+            let new_head = new_tail.wrapping_sub(self.one_lap);
+
+            // Try to move the head.
+            if self
+                .head
+                .compare_exchange_weak(head, new_head, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+            {
+                // Move the tail.
+                self.tail.store(new_tail, Ordering::SeqCst);
+
+                // Swap out the old value.
+                // SAFETY: We know this is initialized, since it's covered by the current queue.
+                let old = unsafe {
+                    slot.value
+                        .with_mut(|slot| slot.replace(MaybeUninit::new(value)).assume_init())
+                };
+
+                // Update the stamp.
+                slot.stamp.store(tail + 1, Ordering::Release);
+
+                // Return a PushError.
+                Err(PushError::Full(old))
+            } else {
+                Ok(value)
+            }
+        });
+
+        match result {
+            Ok(()) => Ok(None),
+            Err(PushError::Full(old_value)) => Ok(Some(old_value)),
+            Err(PushError::Closed(value)) => Err(ForcePushError(value)),
+        }
+    }
+
+    /// Attempts to push an item into the queue, running a closure on failure.
+    ///
+    /// `fail` is run when there is no more room left in the tail of the queue. The parameters of
+    /// this function are as follows:
+    ///
+    /// - The item that failed to push.
+    /// - The value of `self.tail` before the new value would be inserted.
+    /// - The value of `self.tail` after the new value would be inserted.
+    /// - The slot that we attempted to push into.
+    ///
+    /// If `fail` returns `Ok(val)`, we will try pushing `val` to the head of the queue. Otherwise,
+    /// this function will return the error.
+    fn push_or_else<F>(&self, mut value: T, mut fail: F) -> Result<(), PushError<T>>
+    where
+        F: FnMut(T, usize, usize, &Slot<T>) -> Result<T, PushError<T>>,
+    {
         let mut tail = self.tail.load(Ordering::Relaxed);
 
         loop {
@@ -93,22 +163,23 @@ impl<T> Bounded<T> {
             let index = tail & (self.mark_bit - 1);
             let lap = tail & !(self.one_lap - 1);
 
+            // Calculate the new location of the tail.
+            let new_tail = if index + 1 < self.buffer.len() {
+                // Same lap, incremented index.
+                // Set to `{ lap: lap, mark: 0, index: index + 1 }`.
+                tail + 1
+            } else {
+                // One lap forward, index wraps around to zero.
+                // Set to `{ lap: lap.wrapping_add(1), mark: 0, index: 0 }`.
+                lap.wrapping_add(self.one_lap)
+            };
+
             // Inspect the corresponding slot.
             let slot = &self.buffer[index];
             let stamp = slot.stamp.load(Ordering::Acquire);
 
             // If the tail and the stamp match, we may attempt to push.
             if tail == stamp {
-                let new_tail = if index + 1 < self.buffer.len() {
-                    // Same lap, incremented index.
-                    // Set to `{ lap: lap, mark: 0, index: index + 1 }`.
-                    tail + 1
-                } else {
-                    // One lap forward, index wraps around to zero.
-                    // Set to `{ lap: lap.wrapping_add(1), mark: 0, index: 0 }`.
-                    lap.wrapping_add(self.one_lap)
-                };
-
                 // Try moving the tail.
                 match self.tail.compare_exchange_weak(
                     tail,
@@ -118,9 +189,9 @@ impl<T> Bounded<T> {
                 ) {
                     Ok(_) => {
                         // Write the value into the slot and update the stamp.
-                        unsafe {
-                            slot.value.get().write(MaybeUninit::new(value));
-                        }
+                        slot.value.with_mut(|slot| unsafe {
+                            slot.write(MaybeUninit::new(value));
+                        });
                         slot.stamp.store(tail + 1, Ordering::Release);
                         return Ok(());
                     }
@@ -130,18 +201,18 @@ impl<T> Bounded<T> {
                 }
             } else if stamp.wrapping_add(self.one_lap) == tail + 1 {
                 crate::full_fence();
-                let head = self.head.load(Ordering::Relaxed);
 
-                // If the head lags one lap behind the tail as well...
-                if head.wrapping_add(self.one_lap) == tail {
-                    // ...then the queue is full.
-                    return Err(PushError::Full(value));
-                }
+                // We've failed to push; run our failure closure.
+                value = fail(value, tail, new_tail, slot)?;
+
+                // Loom complains if there isn't an explicit busy wait here.
+                #[cfg(loom)]
+                busy_wait();
 
                 tail = self.tail.load(Ordering::Relaxed);
             } else {
                 // Yield because we need to wait for the stamp to get updated.
-                thread::yield_now();
+                busy_wait();
                 tail = self.tail.load(Ordering::Relaxed);
             }
         }
@@ -181,7 +252,9 @@ impl<T> Bounded<T> {
                 ) {
                     Ok(_) => {
                         // Read the value from the slot and update the stamp.
-                        let value = unsafe { slot.value.get().read().assume_init() };
+                        let value = slot
+                            .value
+                            .with_mut(|slot| unsafe { slot.read().assume_init() });
                         slot.stamp
                             .store(head.wrapping_add(self.one_lap), Ordering::Release);
                         return Ok(value);
@@ -204,10 +277,14 @@ impl<T> Bounded<T> {
                     }
                 }
 
+                // Loom complains if there isn't a busy-wait here.
+                #[cfg(loom)]
+                busy_wait();
+
                 head = self.head.load(Ordering::Relaxed);
             } else {
                 // Yield because we need to wait for the stamp to get updated.
-                thread::yield_now();
+                busy_wait();
                 head = self.head.load(Ordering::Relaxed);
             }
         }
@@ -284,23 +361,48 @@ impl<T> Bounded<T> {
 impl<T> Drop for Bounded<T> {
     fn drop(&mut self) {
         // Get the index of the head.
-        let hix = self.head.load(Ordering::Relaxed) & (self.mark_bit - 1);
+        let Self {
+            head,
+            tail,
+            buffer,
+            mark_bit,
+            ..
+        } = self;
 
-        // Loop over all slots that hold a value and drop them.
-        for i in 0..self.len() {
-            // Compute the index of the next slot holding a value.
-            let index = if hix + i < self.buffer.len() {
-                hix + i
-            } else {
-                hix + i - self.buffer.len()
-            };
+        let mark_bit = *mark_bit;
 
-            // Drop the value in the slot.
-            let slot = &self.buffer[index];
-            unsafe {
-                let value = slot.value.get().read().assume_init();
-                drop(value);
-            }
-        }
+        head.with_mut(|&mut head| {
+            tail.with_mut(|&mut tail| {
+                let hix = head & (mark_bit - 1);
+                let tix = tail & (mark_bit - 1);
+
+                let len = if hix < tix {
+                    tix - hix
+                } else if hix > tix {
+                    buffer.len() - hix + tix
+                } else if (tail & !mark_bit) == head {
+                    0
+                } else {
+                    buffer.len()
+                };
+
+                // Loop over all slots that hold a value and drop them.
+                for i in 0..len {
+                    // Compute the index of the next slot holding a value.
+                    let index = if hix + i < buffer.len() {
+                        hix + i
+                    } else {
+                        hix + i - buffer.len()
+                    };
+
+                    // Drop the value in the slot.
+                    let slot = &buffer[index];
+                    slot.value.with_mut(|slot| unsafe {
+                        let value = &mut *slot;
+                        value.as_mut_ptr().drop_in_place();
+                    });
+                }
+            });
+        });
     }
 }

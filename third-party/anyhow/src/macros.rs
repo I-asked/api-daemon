@@ -5,6 +5,8 @@
 /// The surrounding function's or closure's return value is required to be
 /// `Result<_,`[`anyhow::Error`][crate::Error]`>`.
 ///
+/// [anyhow!]: crate::anyhow
+///
 /// # Example
 ///
 /// ```
@@ -50,131 +52,121 @@
 /// #     Ok(())
 /// # }
 /// ```
-#[cfg(doc)]
 #[macro_export]
 macro_rules! bail {
     ($msg:literal $(,)?) => {
-        return $crate::private::Err($crate::anyhow!($msg))
+        return $crate::__private::Err($crate::__anyhow!($msg))
     };
     ($err:expr $(,)?) => {
-        return $crate::private::Err($crate::anyhow!($err))
+        return $crate::__private::Err($crate::__anyhow!($err))
     };
     ($fmt:expr, $($arg:tt)*) => {
-        return $crate::private::Err($crate::anyhow!($fmt, $($arg)*))
+        return $crate::__private::Err($crate::__anyhow!($fmt, $($arg)*))
     };
 }
 
-// Workaround for crates that intentionally contained `{}` in an error message
-// prior to https://github.com/dtolnay/anyhow/issues/55 catching the missing
-// format args.
-#[cfg(not(doc))]
-#[macro_export]
-macro_rules! bail {
-    // https://github.com/estk/log4rs/blob/afa0351af56b3bfd1780389700051d7e4d8bbdc9/src/append/rolling_file/policy/compound/roll/fixed_window.rs#L261
-    ("pattern does not contain `{}`") => {
-        return $crate::private::Err($crate::Error::msg("pattern does not contain `{}`"))
-    };
-    ($msg:literal $(,)?) => {
-        return $crate::private::Err($crate::anyhow!($msg))
-    };
-    ($err:expr $(,)?) => {
-        return $crate::private::Err($crate::anyhow!($err))
-    };
-    ($fmt:expr, $($arg:tt)*) => {
-        return $crate::private::Err($crate::anyhow!($fmt, $($arg)*))
+macro_rules! __ensure {
+    ($ensure:item) => {
+        /// Return early with an error if a condition is not satisfied.
+        ///
+        /// This macro is equivalent to `if !$cond { return
+        /// Err(`[`anyhow!($args...)`][anyhow!]`); }`.
+        ///
+        /// The surrounding function's or closure's return value is required to be
+        /// `Result<_,`[`anyhow::Error`][crate::Error]`>`.
+        ///
+        /// Analogously to `assert!`, `ensure!` takes a condition and exits the function
+        /// if the condition fails. Unlike `assert!`, `ensure!` returns an `Error`
+        /// rather than panicking.
+        ///
+        /// [anyhow!]: crate::anyhow
+        ///
+        /// # Example
+        ///
+        /// ```
+        /// # use anyhow::{ensure, Result};
+        /// #
+        /// # fn main() -> Result<()> {
+        /// #     let user = 0;
+        /// #
+        /// ensure!(user == 0, "only user 0 is allowed");
+        /// #     Ok(())
+        /// # }
+        /// ```
+        ///
+        /// ```
+        /// # use anyhow::{ensure, Result};
+        /// # use thiserror::Error;
+        /// #
+        /// # const MAX_DEPTH: usize = 1;
+        /// #
+        /// #[derive(Error, Debug)]
+        /// enum ScienceError {
+        ///     #[error("recursion limit exceeded")]
+        ///     RecursionLimitExceeded,
+        ///     # #[error("...")]
+        ///     # More = (stringify! {
+        ///     ...
+        ///     # }, 1).1,
+        /// }
+        ///
+        /// # fn main() -> Result<()> {
+        /// #     let depth = 0;
+        /// #
+        /// ensure!(depth <= MAX_DEPTH, ScienceError::RecursionLimitExceeded);
+        /// #     Ok(())
+        /// # }
+        /// ```
+        $ensure
     };
 }
 
-/// Return early with an error if a condition is not satisfied.
-///
-/// This macro is equivalent to `if !$cond { return
-/// Err(`[`anyhow!($args...)`][anyhow!]`); }`.
-///
-/// The surrounding function's or closure's return value is required to be
-/// `Result<_,`[`anyhow::Error`][crate::Error]`>`.
-///
-/// Analogously to `assert!`, `ensure!` takes a condition and exits the function
-/// if the condition fails. Unlike `assert!`, `ensure!` returns an `Error`
-/// rather than panicking.
-///
-/// # Example
-///
-/// ```
-/// # use anyhow::{ensure, Result};
-/// #
-/// # fn main() -> Result<()> {
-/// #     let user = 0;
-/// #
-/// ensure!(user == 0, "only user 0 is allowed");
-/// #     Ok(())
-/// # }
-/// ```
-///
-/// ```
-/// # use anyhow::{ensure, Result};
-/// # use thiserror::Error;
-/// #
-/// # const MAX_DEPTH: usize = 1;
-/// #
-/// #[derive(Error, Debug)]
-/// enum ScienceError {
-///     #[error("recursion limit exceeded")]
-///     RecursionLimitExceeded,
-///     # #[error("...")]
-///     # More = (stringify! {
-///     ...
-///     # }, 1).1,
-/// }
-///
-/// # fn main() -> Result<()> {
-/// #     let depth = 0;
-/// #
-/// ensure!(depth <= MAX_DEPTH, ScienceError::RecursionLimitExceeded);
-/// #     Ok(())
-/// # }
-/// ```
 #[cfg(doc)]
-#[macro_export]
-macro_rules! ensure {
-    ($cond:expr $(,)?) => {
-        if !$cond {
-            return $crate::private::Err($crate::Error::msg(
-                $crate::private::concat!("Condition failed: `", $crate::private::stringify!($cond), "`")
-            ));
-        }
-    };
-    ($cond:expr, $msg:literal $(,)?) => {
-        if !$cond {
-            return $crate::private::Err($crate::anyhow!($msg));
-        }
-    };
-    ($cond:expr, $err:expr $(,)?) => {
-        if !$cond {
-            return $crate::private::Err($crate::anyhow!($err));
-        }
-    };
-    ($cond:expr, $fmt:expr, $($arg:tt)*) => {
-        if !$cond {
-            return $crate::private::Err($crate::anyhow!($fmt, $($arg)*));
-        }
-    };
-}
+__ensure![
+    #[macro_export]
+    macro_rules! ensure {
+        ($cond:expr $(,)?) => {
+            if !$cond {
+                return $crate::__private::Err($crate::Error::msg(
+                    $crate::__private::concat!("Condition failed: `", $crate::__private::stringify!($cond), "`")
+                ));
+            }
+        };
+        ($cond:expr, $msg:literal $(,)?) => {
+            if !$cond {
+                return $crate::__private::Err($crate::__anyhow!($msg));
+            }
+        };
+        ($cond:expr, $err:expr $(,)?) => {
+            if !$cond {
+                return $crate::__private::Err($crate::__anyhow!($err));
+            }
+        };
+        ($cond:expr, $fmt:expr, $($arg:tt)*) => {
+            if !$cond {
+                return $crate::__private::Err($crate::__anyhow!($fmt, $($arg)*));
+            }
+        };
+    }
+];
 
 #[cfg(not(doc))]
-#[macro_export]
-macro_rules! ensure {
-    ($($tt:tt)*) => {
-        $crate::__parse_ensure!(
-            /* state */ 0
-            /* stack */ ()
-            /* bail */ ($($tt)*)
-            /* fuel */ (~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~)
-            /* parse */ {()}
-            /* dup */ ($($tt)*)
-            /* rest */ $($tt)*
-        )
-    };
-}
+__ensure![
+    #[macro_export]
+    macro_rules! ensure {
+        ($($tt:tt)*) => {
+            $crate::__parse_ensure!(
+                /* state */ 0
+                /* stack */ ()
+                /* bail */ ($($tt)*)
+                /* fuel */ (~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~ ~~~~~~~~~~)
+                /* parse */ {()}
+                /* dup */ ($($tt)*)
+                /* rest */ $($tt)*
+            )
+        };
+    }
+];
 
 /// Construct an ad-hoc error from a string or existing non-`anyhow` error
 /// value.
@@ -206,18 +198,44 @@ macro_rules! ensure {
 /// ```
 #[macro_export]
 macro_rules! anyhow {
+    ($msg:literal $(,)?) => {
+        $crate::__private::must_use({
+            let error = $crate::__private::format_err($crate::__private::format_args!($msg));
+            error
+        })
+    };
+    ($err:expr $(,)?) => {
+        $crate::__private::must_use({
+            use $crate::__private::kind::*;
+            let error = match $err {
+                error => (&error).anyhow_kind().new(error),
+            };
+            error
+        })
+    };
+    ($fmt:expr, $($arg:tt)*) => {
+        $crate::Error::msg($crate::__private::format!($fmt, $($arg)*))
+    };
+}
+
+// Not public API. This is used in the implementation of some of the other
+// macros, in which the must_use call is not needed because the value is known
+// to be used.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __anyhow {
     ($msg:literal $(,)?) => ({
-        let error = $crate::private::format_err($crate::private::format_args!($msg));
+        let error = $crate::__private::format_err($crate::__private::format_args!($msg));
         error
     });
     ($err:expr $(,)?) => ({
-        use $crate::private::kind::*;
+        use $crate::__private::kind::*;
         let error = match $err {
             error => (&error).anyhow_kind().new(error),
         };
         error
     });
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::Error::msg($crate::private::format!($fmt, $($arg)*))
+        $crate::Error::msg($crate::__private::format!($fmt, $($arg)*))
     };
 }

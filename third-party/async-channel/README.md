@@ -1,6 +1,6 @@
 # async-channel
 
-[![Build](https://github.com/smol-rs/async-channel/workflows/Build%20and%20test/badge.svg)](
+[![Build](https://github.com/smol-rs/async-channel/actions/workflows/ci.yml/badge.svg)](
 https://github.com/smol-rs/async-channel/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue.svg)](
 https://github.com/smol-rs/async-channel)
@@ -9,7 +9,8 @@ https://crates.io/crates/async-channel)
 [![Documentation](https://docs.rs/async-channel/badge.svg)](
 https://docs.rs/async-channel)
 
-An async multi-producer multi-consumer channel.
+An async multi-producer multi-consumer channel, where each message can be received by only
+one of all existing consumers.
 
 There are two kinds of channels:
 

@@ -2,13 +2,13 @@
 
 extern crate tls_openssl as openssl;
 
-use std::{convert::Infallible, io};
+use std::{convert::Infallible, io, time::Duration};
 
 use actix_http::{
     body::{BodyStream, BoxBody, SizedStream},
     error::PayloadError,
     header::{self, HeaderValue},
-    Error, HttpService, Method, Request, Response, StatusCode, Version,
+    Error, HttpService, Method, Request, Response, StatusCode, TlsAcceptorConfig, Version,
 };
 use actix_http_test::test_server;
 use actix_service::{fn_service, ServiceFactoryExt};
@@ -16,7 +16,7 @@ use actix_utils::future::{err, ok, ready};
 use bytes::{Bytes, BytesMut};
 use derive_more::{Display, Error};
 use futures_core::Stream;
-use futures_util::stream::{once, StreamExt as _};
+use futures_util::{stream::once, StreamExt as _};
 use openssl::{
     pkey::PKey,
     ssl::{SslAcceptor, SslMethod},
@@ -89,7 +89,10 @@ async fn h2_1() -> io::Result<()> {
                 assert_eq!(req.version(), Version::HTTP_2);
                 ok::<_, Error>(Response::ok())
             })
-            .openssl(tls_config())
+            .openssl_with_config(
+                tls_config(),
+                TlsAcceptorConfig::default().handshake_timeout(Duration::from_secs(5)),
+            )
             .map_err(|_| ())
     })
     .await;
@@ -317,8 +320,7 @@ async fn h2_body_length() {
     let mut srv = test_server(move || {
         HttpService::build()
             .h2(|_| async {
-                let body =
-                    once(async { Ok::<_, Infallible>(Bytes::from_static(STR.as_ref())) });
+                let body = once(async { Ok::<_, Infallible>(Bytes::from_static(STR.as_ref())) });
 
                 Ok::<_, Infallible>(
                     Response::ok().set_body(SizedStream::new(STR.len() as u64, body)),

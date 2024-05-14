@@ -2,19 +2,15 @@ use std::io;
 use std::io::prelude::*;
 use std::mem;
 
-#[cfg(feature = "tokio")]
-use futures::Poll;
-#[cfg(feature = "tokio")]
-use tokio_io::{AsyncRead, AsyncWrite};
-
 use crate::zio;
 use crate::{Compress, Decompress};
 
 /// A ZLIB encoder, or compressor.
 ///
-/// This structure consumes a [`BufRead`] interface, reading uncompressed data
-/// from the underlying reader, and emitting compressed data.
+/// This structure implements a [`Read`] interface. When read from, it reads
+/// uncompressed data from the underlying [`BufRead`] and provides the compressed data.
 ///
+/// [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 /// [`BufRead`]: https://doc.rust-lang.org/std/io/trait.BufRead.html
 ///
 /// # Examples
@@ -50,6 +46,15 @@ impl<R: BufRead> ZlibEncoder<R> {
         ZlibEncoder {
             obj: r,
             data: Compress::new(level, true),
+        }
+    }
+
+    /// Creates a new encoder with the given `compression` settings which will
+    /// read uncompressed data from the given stream `r` and emit the compressed stream.
+    pub fn new_with_compress(r: R, compression: Compress) -> ZlibEncoder<R> {
+        ZlibEncoder {
+            obj: r,
+            data: compression,
         }
     }
 }
@@ -112,9 +117,6 @@ impl<R: BufRead> Read for ZlibEncoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncRead + BufRead> AsyncRead for ZlibEncoder<R> {}
-
 impl<R: BufRead + Write> Write for ZlibEncoder<R> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.get_mut().write(buf)
@@ -125,18 +127,12 @@ impl<R: BufRead + Write> Write for ZlibEncoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncWrite + BufRead> AsyncWrite for ZlibEncoder<R> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.get_mut().shutdown()
-    }
-}
-
 /// A ZLIB decoder, or decompressor.
 ///
-/// This structure consumes a [`BufRead`] interface, reading compressed data
-/// from the underlying reader, and emitting uncompressed data.
+/// This structure implements a [`Read`] interface. When read from, it reads
+/// compressed data from the underlying [`BufRead`] and provides the uncompressed data.
 ///
+/// [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 /// [`BufRead`]: https://doc.rust-lang.org/std/io/trait.BufRead.html
 ///
 /// # Examples
@@ -180,6 +176,15 @@ impl<R: BufRead> ZlibDecoder<R> {
             data: Decompress::new(true),
         }
     }
+
+    /// Creates a new decoder which will decompress data read from the given
+    /// stream, using the given `decompression` settings.
+    pub fn new_with_decompress(r: R, decompression: Decompress) -> ZlibDecoder<R> {
+        ZlibDecoder {
+            obj: r,
+            data: decompression,
+        }
+    }
 }
 
 pub fn reset_decoder_data<R>(zlib: &mut ZlibDecoder<R>) {
@@ -207,7 +212,7 @@ impl<R> ZlibDecoder<R> {
     /// Acquires a mutable reference to the underlying stream
     ///
     /// Note that mutation of the stream may result in surprising results if
-    /// this encoder is continued to be used.
+    /// this decoder is continued to be used.
     pub fn get_mut(&mut self) -> &mut R {
         &mut self.obj
     }
@@ -237,9 +242,6 @@ impl<R: BufRead> Read for ZlibDecoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncRead + BufRead> AsyncRead for ZlibDecoder<R> {}
-
 impl<R: BufRead + Write> Write for ZlibDecoder<R> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.get_mut().write(buf)
@@ -250,9 +252,49 @@ impl<R: BufRead + Write> Write for ZlibDecoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncWrite + BufRead> AsyncWrite for ZlibDecoder<R> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.get_mut().shutdown()
+#[cfg(test)]
+mod test {
+    use crate::bufread::ZlibDecoder;
+    use crate::zlib::write;
+    use crate::Compression;
+    use std::io::{Read, Write};
+
+    // ZlibDecoder consumes one zlib archive and then returns 0 for subsequent reads, allowing any
+    // additional data to be consumed by the caller.
+    #[test]
+    fn decode_extra_data() {
+        let expected = "Hello World";
+
+        let compressed = {
+            let mut e = write::ZlibEncoder::new(Vec::new(), Compression::default());
+            e.write(expected.as_ref()).unwrap();
+            let mut b = e.finish().unwrap();
+            b.push(b'x');
+            b
+        };
+
+        let mut output = Vec::new();
+        let mut decoder = ZlibDecoder::new(compressed.as_slice());
+        let decoded_bytes = decoder.read_to_end(&mut output).unwrap();
+        assert_eq!(decoded_bytes, output.len());
+        let actual = std::str::from_utf8(&output).expect("String parsing error");
+        assert_eq!(
+            actual, expected,
+            "after decompression we obtain the original input"
+        );
+
+        output.clear();
+        assert_eq!(
+            decoder.read(&mut output).unwrap(),
+            0,
+            "subsequent read of decoder returns 0, but inner reader can return additional data"
+        );
+        let mut reader = decoder.into_inner();
+        assert_eq!(
+            reader.read_to_end(&mut output).unwrap(),
+            1,
+            "extra data is accessible in underlying buf-read"
+        );
+        assert_eq!(output, b"x");
     }
 }

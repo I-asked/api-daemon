@@ -14,11 +14,13 @@ use crate::iter::LineColIterator;
 use crate::raw::BorrowedRawDeserializer;
 #[cfg(all(feature = "raw_value", feature = "std"))]
 use crate::raw::OwnedRawDeserializer;
+#[cfg(all(feature = "raw_value", feature = "std"))]
+use alloc::string::String;
 #[cfg(feature = "raw_value")]
 use serde::de::Visitor;
 
 /// Trait used by the deserializer for iterating over input. This is manually
-/// "specialized" for iterating over &[u8]. Once feature(specialization) is
+/// "specialized" for iterating over `&[u8]`. Once feature(specialization) is
 /// stable we can use actual specialization.
 ///
 /// This trait is sealed and cannot be implemented for types outside of
@@ -81,7 +83,7 @@ pub trait Read<'de>: private::Sealed {
     #[doc(hidden)]
     fn ignore_str(&mut self) -> Result<()>;
 
-    /// Assumes the previous byte was a hex escape sequnce ('\u') in a string.
+    /// Assumes the previous byte was a hex escape sequence ('\u') in a string.
     /// Parses next hexadecimal sequence.
     #[doc(hidden)]
     fn decode_hex_escape(&mut self) -> Result<u16>;
@@ -252,7 +254,7 @@ where
             Some(ch) => {
                 #[cfg(feature = "raw_value")]
                 {
-                    if let Some(ref mut buf) = self.raw_buffer {
+                    if let Some(buf) = &mut self.raw_buffer {
                         buf.push(ch);
                     }
                 }
@@ -263,7 +265,7 @@ where
                 Some(Ok(ch)) => {
                     #[cfg(feature = "raw_value")]
                     {
-                        if let Some(ref mut buf) = self.raw_buffer {
+                        if let Some(buf) = &mut self.raw_buffer {
                             buf.push(ch);
                         }
                     }
@@ -298,7 +300,7 @@ where
     #[cfg(feature = "raw_value")]
     fn discard(&mut self) {
         if let Some(ch) = self.ch.take() {
-            if let Some(ref mut buf) = self.raw_buffer {
+            if let Some(buf) = &mut self.raw_buffer {
                 buf.push(ch);
             }
         }

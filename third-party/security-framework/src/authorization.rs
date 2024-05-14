@@ -2,25 +2,30 @@
 
 /// # Potential improvements
 ///
-/// * When generic specialization stabilizes prevent copying from CString
+/// * When generic specialization stabilizes prevent copying from `CString`
 ///   arguments.
-/// * AuthorizationCopyRightsAsync
+/// * `AuthorizationCopyRightsAsync`
 /// * Provide constants for well known item names
+
 use crate::base::{Error, Result};
+#[cfg(all(target_os = "macos", feature = "job-bless"))]
+use core_foundation::base::Boolean;
 use core_foundation::base::{CFTypeRef, TCFType};
 use core_foundation::bundle::CFBundleRef;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+#[cfg(all(target_os = "macos", feature = "job-bless"))]
+use core_foundation::error::CFError;
+#[cfg(all(target_os = "macos", feature = "job-bless"))]
+use core_foundation::error::CFErrorRef;
 use core_foundation::string::{CFString, CFStringRef};
 use security_framework_sys::authorization as sys;
 use security_framework_sys::base::errSecConversionError;
+use std::ffi::{CStr, CString};
+use std::fs::File;
 use std::mem::MaybeUninit;
 use std::os::raw::c_void;
-use std::{
-    convert::TryFrom,
-    ffi::{CStr, CString},
-    fs::File,
-};
-use std::{convert::TryInto, marker::PhantomData};
+use std::ptr::addr_of;
+use std::marker::PhantomData;
 use sys::AuthorizationExternalForm;
 
 macro_rules! optional_str_to_cfref {
@@ -39,6 +44,7 @@ macro_rules! cstring_or_err {
 
 bitflags::bitflags! {
     /// The flags used to specify authorization options.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Flags: sys::AuthorizationFlags {
         /// An empty flag set that you use as a placeholder when you don't want
         /// any of the other flags.
@@ -80,7 +86,7 @@ impl AuthorizationItem {
     ///
     /// If `name` isn't convertable to a `CString` it will return
     /// Err(errSecConversionError).
-    pub fn name(&self) -> &str {
+    #[must_use] pub fn name(&self) -> &str {
         unsafe {
             CStr::from_ptr(self.0.name)
                 .to_str()
@@ -91,7 +97,7 @@ impl AuthorizationItem {
     /// The information pertaining to the name field. Do not rely on NULL
     /// termination of string data.
     #[inline]
-    pub fn value(&self) -> Option<&[u8]> {
+    #[must_use] pub fn value(&self) -> Option<&[u8]> {
         if self.0.value.is_null() {
             return None;
         }
@@ -165,11 +171,12 @@ impl AuthorizationItemSetBuilder {
     /// Creates a new `AuthorizationItemSetStore`, which simplifies creating
     /// owned vectors of `AuthorizationItem`s.
     #[inline(always)]
+    #[must_use]
     pub fn new() -> AuthorizationItemSetBuilder {
         Default::default()
     }
 
-    /// Adds an AuthorizationItem with the name set to a right and an empty
+    /// Adds an `AuthorizationItem` with the name set to a right and an empty
     /// value.
     ///
     /// If `name` isn't convertable to a `CString` it will return
@@ -180,7 +187,7 @@ impl AuthorizationItemSetBuilder {
         Ok(self)
     }
 
-    /// Adds an AuthorizationItem with arbitrary data.
+    /// Adds an `AuthorizationItem` with arbitrary data.
     ///
     /// If `name` isn't convertable to a `CString` it will return
     /// Err(errSecConversionError).
@@ -194,7 +201,7 @@ impl AuthorizationItemSetBuilder {
         Ok(self)
     }
 
-    /// Adds an AuthorizationItem with NULL terminated string data.
+    /// Adds an `AuthorizationItem` with NULL terminated string data.
     ///
     /// If `name` or `value` isn't convertable to a `CString` it will return
     /// Err(errSecConversionError).
@@ -212,6 +219,7 @@ impl AuthorizationItemSetBuilder {
 
     /// Creates the `sys::AuthorizationItemSet`, and gives you ownership of the
     /// data it points to.
+    #[must_use]
     pub fn build(mut self) -> AuthorizationItemSetStorage {
         self.storage.items = self
             .storage
@@ -238,6 +246,7 @@ impl AuthorizationItemSetBuilder {
 }
 
 /// Used by `Authorization::set_item` to define the rules of he right.
+#[derive(Copy, Clone)]
 pub enum RightDefinition<'a> {
     /// The dictionary will contain the keys and values that define the rules.
     FromDictionary(&'a CFDictionary<CFStringRef, CFTypeRef>),
@@ -246,8 +255,8 @@ pub enum RightDefinition<'a> {
     FromExistingRight(&'a str),
 }
 
-/// A wrapper around AuthorizationCreate and functions which operate on an
-/// AuthorizationRef.
+/// A wrapper around `AuthorizationCreate` and functions which operate on an
+/// `AuthorizationRef`.
 #[derive(Debug)]
 pub struct Authorization {
     handle: sys::AuthorizationRef,
@@ -272,17 +281,18 @@ impl TryFrom<AuthorizationExternalForm> for Authorization {
 
         let auth = Authorization {
             handle: unsafe { handle.assume_init() },
-            free_flags: Default::default(),
+            free_flags: Flags::default(),
         };
 
         Ok(auth)
     }
 }
 
-impl<'a> Authorization {
+impl Authorization {
     /// Creates an authorization object which has no environment or associated
     /// rights.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         Self::new(None, None, Default::default())
     }
@@ -297,17 +307,19 @@ impl<'a> Authorization {
     /// icon or prompt data to be used in the authentication dialog box. In
     /// macOS 10.4 and later, you can also pass a user name and password in
     /// order to authorize a user without user interaction.
+    #[allow(clippy::unnecessary_cast)]
     pub fn new(
+        // FIXME: this should have been by reference
         rights: Option<AuthorizationItemSetStorage>,
         environment: Option<AuthorizationItemSetStorage>,
         flags: Flags,
     ) -> Result<Self> {
         let rights_ptr = rights.as_ref().map_or(std::ptr::null(), |r| {
-            &r.set as *const sys::AuthorizationItemSet
+            addr_of!(r.set) as *const sys::AuthorizationItemSet
         });
 
         let env_ptr = environment.as_ref().map_or(std::ptr::null(), |e| {
-            &e.set as *const sys::AuthorizationItemSet
+            addr_of!(e.set) as *const sys::AuthorizationItemSet
         });
 
         let mut handle = MaybeUninit::<sys::AuthorizationRef>::uninit();
@@ -548,6 +560,37 @@ impl<'a> Authorization {
         Ok(self.execute_with_privileges_internal(command.as_ref().as_os_str().as_bytes(), &arguments, flags, true)?.unwrap())
     }
 
+    /// Submits the executable for the given label as a `launchd` job.
+    #[cfg(all(target_os = "macos", feature = "job-bless"))]
+    pub fn job_bless(&self, label: &str) -> Result<(), CFError> {
+        #[link(name = "ServiceManagement", kind = "framework")]
+        extern "C" {
+            static kSMDomainSystemLaunchd: CFStringRef;
+
+            fn SMJobBless(
+                domain: CFStringRef,
+                executableLabel: CFStringRef,
+                auth: sys::AuthorizationRef,
+                error: *mut CFErrorRef,
+            ) -> Boolean;
+        }
+
+        unsafe {
+            let mut error = std::ptr::null_mut();
+            SMJobBless(
+                kSMDomainSystemLaunchd,
+                CFString::new(label).as_concrete_TypeRef(),
+                self.handle,
+                &mut error,
+            );
+            if !error.is_null() {
+                return Err(CFError::wrap_under_create_rule(error));
+            }
+
+            Ok(())
+        }
+    }
+
     // Runs an executable tool with root privileges.
     #[cfg(target_os = "macos")]
     fn execute_with_privileges_internal(
@@ -600,7 +643,6 @@ impl Drop for Authorization {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_foundation::string::CFString;
 
     #[test]
     fn test_create_default_authorization() {
@@ -647,14 +689,8 @@ mod tests {
 
     fn create_credentials_env() -> Result<AuthorizationItemSetStorage> {
         let set = AuthorizationItemSetBuilder::new()
-            .add_string(
-                "username",
-                option_env!("USER").expect("You must set the USER environment variable"),
-            )?
-            .add_string(
-                "password",
-                option_env!("PASSWORD").expect("You must set the PASSWORD environment varible"),
-            )?
+            .add_string("username", std::env::var("USER").expect("You must set the USER environment variable"))?
+            .add_string("password", std::env::var("PASSWORD").expect("You must set the PASSWORD environment varible"))?
             .build();
 
         Ok(set)
@@ -681,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_create_authorization_with_credentials() -> Result<()> {
-        if option_env!("PASSWORD").is_none() {
+        if std::env::var_os("PASSWORD").is_none() {
             return Ok(());
         }
 
@@ -715,7 +751,7 @@ mod tests {
     /// This test will only pass if its process has a valid code signature.
     #[test]
     fn test_modify_authorization_database() -> Result<()> {
-        if option_env!("PASSWORD").is_none() {
+        if std::env::var_os("PASSWORD").is_none() {
             return Ok(());
         }
 
@@ -750,7 +786,7 @@ mod tests {
     /// This test will succeed if authorization popup is approved.
     #[test]
     fn test_execute_with_privileges() -> Result<()> {
-        if option_env!("PASSWORD").is_none() {
+        if std::env::var_os("PASSWORD").is_none() {
             return Ok(());
         }
 
@@ -767,7 +803,7 @@ mod tests {
                 | Flags::EXTEND_RIGHTS,
         )?;
 
-        let file = auth.execute_with_privileges_piped("/bin/ls", &["/"], Flags::DEFAULTS)?;
+        let file = auth.execute_with_privileges_piped("/bin/ls", ["/"], Flags::DEFAULTS)?;
 
         use std::io::{self, BufRead};
         for line in io::BufReader::new(file).lines() {

@@ -125,7 +125,7 @@ impl SslContextExt for SslContext {
             if ptr.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(slice::from_raw_parts(ptr as *const u8, len)))
+                Ok(Some(slice::from_raw_parts(ptr.cast::<u8>(), len)))
             }
         }
     }
@@ -134,7 +134,7 @@ impl SslContextExt for SslContext {
         unsafe {
             cvt(SSLSetDiffieHellmanParams(
                 self.as_inner(),
-                dh_params.as_ptr() as *const _,
+                dh_params.as_ptr().cast(),
                 dh_params.len(),
             ))
         }
@@ -214,7 +214,7 @@ mod test {
     use std::io::prelude::*;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
-    use tempdir::TempDir;
+    use tempfile::tempdir;
 
     use super::*;
     use crate::cipher_suite::CipherSuite;
@@ -228,7 +228,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("server_client"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -255,7 +255,7 @@ mod test {
         let stream = match ctx.handshake(stream) {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Interrupted(stream)) => stream,
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         };
 
         assert!(stream.server_auth_completed());
@@ -276,7 +276,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("server_client_builders"));
+            let dir = p!(tempdir());
 
             let identity = identity(dir.path());
             let builder = ServerBuilder::new(&identity, &[]);
@@ -307,7 +307,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("client_bad_cert"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -335,7 +335,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("client_bad_cert"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -367,7 +367,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("negotiated_cipher"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -404,7 +404,7 @@ mod test {
         let stream = match ctx.handshake(stream) {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Interrupted(stream)) => stream,
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         };
 
         let mut stream = p!(stream.handshake());
@@ -436,7 +436,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("negotiated_cipher"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -464,7 +464,7 @@ mod test {
         let stream = match ctx.handshake(stream) {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Interrupted(stream)) => stream,
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         };
 
         let mut stream = p!(stream.handshake());
@@ -479,7 +479,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("negotiated_cipher"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -494,7 +494,7 @@ mod test {
             match ctx.handshake(stream) {
                 Ok(_) => panic!("unexpected success"),
                 Err(HandshakeError::Failure(_)) => {}
-                Err(err) => panic!("unexpected error {:?}", err),
+                Err(err) => panic!("unexpected error {err:?}"),
             }
         });
 
@@ -508,13 +508,13 @@ mod test {
         let stream = match ctx.handshake(stream) {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Interrupted(stream)) => stream,
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         };
 
         match stream.handshake() {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Failure(_)) => {}
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         }
 
         handle.join().unwrap();
@@ -526,7 +526,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("negotiated_cipher"));
+            let dir = p!(tempdir());
 
             let mut ctx = p!(SslContext::new(
                 SslProtocolSide::SERVER,
@@ -541,7 +541,7 @@ mod test {
             match ctx.handshake(stream) {
                 Ok(_) => panic!("unexpected success"),
                 Err(HandshakeError::Failure(_)) => {}
-                Err(err) => panic!("unexpected error {:?}", err),
+                Err(err) => panic!("unexpected error {err:?}"),
             }
         });
 
@@ -550,7 +550,7 @@ mod test {
             SslConnectionType::STREAM
         ));
         p!(ctx.set_break_on_server_auth(true));
-        let dir = p!(TempDir::new("negotiated_cipher"));
+        let dir = p!(tempdir());
         let identity = identity(dir.path());
         p!(ctx.set_certificate(&identity, &[]));
         let stream = p!(TcpStream::connect(("localhost", port)));
@@ -558,13 +558,13 @@ mod test {
         let stream = match ctx.handshake(stream) {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Interrupted(stream)) => stream,
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         };
 
         match stream.handshake() {
             Ok(_) => panic!("unexpected success"),
             Err(HandshakeError::Failure(_)) => {}
-            Err(err) => panic!("unexpected error {:?}", err),
+            Err(err) => panic!("unexpected error {err:?}"),
         }
 
         handle.join().unwrap();
@@ -588,7 +588,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("close"));
+            let dir = p!(tempdir());
 
             let identity = identity(dir.path());
             let builder = ServerBuilder::new(&identity, &[]);
@@ -617,7 +617,7 @@ mod test {
         let port = p!(listener.local_addr()).port();
 
         let handle = thread::spawn(move || {
-            let dir = p!(TempDir::new("short_read"));
+            let dir = p!(tempdir());
 
             let identity = identity(dir.path());
             let builder = ServerBuilder::new(&identity, &[]);

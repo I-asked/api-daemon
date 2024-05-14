@@ -1,4 +1,4 @@
-#![doc(html_root_url = "https://docs.rs/http-body/0.4.4")]
+#![doc(html_root_url = "https://docs.rs/http-body/0.4.6")]
 #![deny(
     missing_debug_implementations,
     missing_docs,
@@ -13,21 +13,26 @@
 //!
 //! [`Body`]: trait.Body.html
 
+mod collect;
 mod empty;
 mod full;
+mod limited;
 mod next;
 mod size_hint;
 
 pub mod combinators;
 
+pub use self::collect::Collected;
 pub use self::empty::Empty;
 pub use self::full::Full;
+pub use self::limited::{LengthLimitError, Limited};
 pub use self::next::{Data, Trailers};
 pub use self::size_hint::SizeHint;
 
 use self::combinators::{BoxBody, MapData, MapErr, UnsyncBoxBody};
-use bytes::Buf;
+use bytes::{Buf, Bytes};
 use http::HeaderMap;
+use std::convert::Infallible;
 use std::ops;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -113,6 +118,15 @@ pub trait Body {
         F: FnMut(Self::Error) -> E,
     {
         MapErr::new(self, f)
+    }
+
+    /// Turn this body into [`Collected`] body which will collect all the DATA frames
+    /// and trailers.
+    fn collect(self) -> crate::collect::Collect<Self>
+    where
+        Self: Sized,
+    {
+        collect::Collect::new(self)
     }
 
     /// Turn this body into a boxed trait object.
@@ -280,6 +294,38 @@ impl<B: Body> Body for http::Response<B> {
 
     fn size_hint(&self) -> SizeHint {
         self.body().size_hint()
+    }
+}
+
+impl Body for String {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_data(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+        if !self.is_empty() {
+            let s = std::mem::take(&mut *self);
+            Poll::Ready(Some(Ok(s.into_bytes().into())))
+        } else {
+            Poll::Ready(None)
+        }
+    }
+
+    fn poll_trailers(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+        Poll::Ready(Ok(None))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::with_exact(self.len() as u64)
     }
 }
 

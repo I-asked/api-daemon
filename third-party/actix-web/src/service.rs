@@ -24,7 +24,7 @@ use crate::{
     guard::{Guard, GuardContext},
     info::ConnectionInfo,
     rmap::ResourceMap,
-    Error, HttpRequest, HttpResponse,
+    Error, FromRequest, HttpRequest, HttpResponse,
 };
 
 pub(crate) type BoxedHttpService = BoxService<ServiceRequest, ServiceResponse<BoxBody>, Error>;
@@ -78,21 +78,58 @@ pub struct ServiceRequest {
 }
 
 impl ServiceRequest {
-    /// Construct service request
+    /// Construct `ServiceRequest` from parts.
     pub(crate) fn new(req: HttpRequest, payload: Payload) -> Self {
         Self { req, payload }
     }
 
-    /// Deconstruct request into parts
+    /// Deconstruct `ServiceRequest` into inner parts.
     #[inline]
     pub fn into_parts(self) -> (HttpRequest, Payload) {
         (self.req, self.payload)
     }
 
-    /// Get mutable access to inner `HttpRequest` and `Payload`
+    /// Returns mutable accessors to inner parts.
     #[inline]
     pub fn parts_mut(&mut self) -> (&mut HttpRequest, &mut Payload) {
         (&mut self.req, &mut self.payload)
+    }
+
+    /// Returns immutable accessors to inner parts.
+    #[inline]
+    pub fn parts(&self) -> (&HttpRequest, &Payload) {
+        (&self.req, &self.payload)
+    }
+
+    /// Returns immutable accessor to inner [`HttpRequest`].
+    #[inline]
+    pub fn request(&self) -> &HttpRequest {
+        &self.req
+    }
+
+    /// Derives a type from this request using an [extractor](crate::FromRequest).
+    ///
+    /// Returns the `T` extractor's `Future` type which can be `await`ed. This is particularly handy
+    /// when you want to use an extractor in a middleware implementation.
+    ///
+    /// # Examples
+    /// ```
+    /// use actix_web::{
+    ///     dev::{ServiceRequest, ServiceResponse},
+    ///     web::Path, Error
+    /// };
+    ///
+    /// async fn my_helper(mut srv_req: ServiceRequest) -> Result<ServiceResponse, Error> {
+    ///     let path = srv_req.extract::<Path<(String, u32)>>().await?;
+    ///     // [...]
+    /// #   todo!()
+    /// }
+    /// ```
+    pub fn extract<T>(&mut self) -> <T as FromRequest>::Future
+    where
+        T: FromRequest,
+    {
+        T::from_request(&self.req, &mut self.payload)
     }
 
     /// Construct request from parts.
@@ -105,9 +142,7 @@ impl ServiceRequest {
         Self { req, payload }
     }
 
-    /// Construct request from request.
-    ///
-    /// The returned `ServiceRequest` would have no payload.
+    /// Construct `ServiceRequest` with no payload from given `HttpRequest`.
     #[inline]
     pub fn from_request(req: HttpRequest) -> Self {
         ServiceRequest {
@@ -116,63 +151,63 @@ impl ServiceRequest {
         }
     }
 
-    /// Create service response
+    /// Create `ServiceResponse` from this request and given response.
     #[inline]
     pub fn into_response<B, R: Into<Response<B>>>(self, res: R) -> ServiceResponse<B> {
         let res = HttpResponse::from(res.into());
         ServiceResponse::new(self.req, res)
     }
 
-    /// Create service response for error
+    /// Create `ServiceResponse` from this request and given error.
     #[inline]
     pub fn error_response<E: Into<Error>>(self, err: E) -> ServiceResponse {
         let res = HttpResponse::from_error(err.into());
         ServiceResponse::new(self.req, res)
     }
 
-    /// This method returns reference to the request head
+    /// Returns a reference to the request head.
     #[inline]
     pub fn head(&self) -> &RequestHead {
         self.req.head()
     }
 
-    /// This method returns reference to the request head
+    /// Returns a mutable reference to the request head.
     #[inline]
     pub fn head_mut(&mut self) -> &mut RequestHead {
         self.req.head_mut()
     }
 
-    /// Request's uri.
+    /// Returns the request URI.
     #[inline]
     pub fn uri(&self) -> &Uri {
         &self.head().uri
     }
 
-    /// Read the Request method.
+    /// Returns the request method.
     #[inline]
     pub fn method(&self) -> &Method {
         &self.head().method
     }
 
-    /// Read the Request Version.
+    /// Returns the request version.
     #[inline]
     pub fn version(&self) -> Version {
         self.head().version
     }
 
+    /// Returns a reference to request headers.
     #[inline]
-    /// Returns request's headers.
     pub fn headers(&self) -> &HeaderMap {
         &self.head().headers
     }
 
+    /// Returns a mutable reference to request headers.
     #[inline]
-    /// Returns mutable request's headers.
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.head_mut().headers
     }
 
-    /// The target path of this Request.
+    /// Returns request path.
     #[inline]
     pub fn path(&self) -> &str {
         self.head().uri.path()
@@ -184,37 +219,29 @@ impl ServiceRequest {
         self.req.query_string()
     }
 
-    /// Peer socket address.
+    /// Returns peer's socket address.
     ///
-    /// Peer address is the directly connected peer's socket address. If a proxy is used in front of
-    /// the Actix Web server, then it would be address of this proxy.
+    /// See [`HttpRequest::peer_addr`] for more details.
     ///
-    /// To get client connection information `ConnectionInfo` should be used.
-    ///
-    /// Will only return None when called in unit tests.
+    /// [`HttpRequest::peer_addr`]: crate::HttpRequest::peer_addr
     #[inline]
     pub fn peer_addr(&self) -> Option<net::SocketAddr> {
         self.head().peer_addr
     }
 
-    /// Get *ConnectionInfo* for the current request.
+    /// Returns a reference to connection info.
     #[inline]
     pub fn connection_info(&self) -> Ref<'_, ConnectionInfo> {
         self.req.connection_info()
     }
 
-    /// Returns a reference to the Path parameters.
-    ///
-    /// Params is a container for URL parameters.
-    /// A variable segment is specified in the form `{identifier}`,
-    /// where the identifier can be used later in a request handler to
-    /// access the matched value for that segment.
+    /// Counterpart to [`HttpRequest::match_info`].
     #[inline]
     pub fn match_info(&self) -> &Path<Url> {
         self.req.match_info()
     }
 
-    /// Returns a mutable reference to the Path parameters.
+    /// Returns a mutable reference to the path match information.
     #[inline]
     pub fn match_info_mut(&mut self) -> &mut Path<Url> {
         self.req.match_info_mut()
@@ -232,13 +259,14 @@ impl ServiceRequest {
         self.req.match_pattern()
     }
 
-    /// Get a reference to a `ResourceMap` of current application.
+    /// Returns a reference to the application's resource map.
+    /// Counterpart to [`HttpRequest::resource_map`].
     #[inline]
     pub fn resource_map(&self) -> &ResourceMap {
         self.req.resource_map()
     }
 
-    /// Service configuration
+    /// Counterpart to [`HttpRequest::app_config`].
     #[inline]
     pub fn app_config(&self) -> &AppConfig {
         self.req.app_config()
@@ -262,6 +290,7 @@ impl ServiceRequest {
         self.req.conn_data()
     }
 
+    /// Return request cookies.
     #[cfg(feature = "cookies")]
     #[inline]
     pub fn cookies(&self) -> Result<Ref<'_, Vec<Cookie<'static>>>, CookieParseError> {
@@ -292,9 +321,7 @@ impl ServiceRequest {
             .push(extensions);
     }
 
-    /// Creates a context object for use with a [guard](crate::guard).
-    ///
-    /// Useful if you are implementing
+    /// Creates a context object for use with a routing [guard](crate::guard).
     #[inline]
     pub fn guard_ctx(&self) -> GuardContext<'_> {
         GuardContext { req: self }
@@ -666,30 +693,36 @@ service_tuple! { A B C D E F G H I J K L }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test::{self, init_service, TestRequest};
-    use crate::{guard, http, web, App, HttpResponse};
     use actix_service::Service;
     use actix_utils::future::ok;
 
+    use super::*;
+    use crate::{
+        guard, http,
+        test::{self, init_service, TestRequest},
+        web, App, HttpResponse,
+    };
+
     #[actix_rt::test]
     async fn test_service() {
-        let srv = init_service(
-            App::new().service(web::service("/test").name("test").finish(
-                |req: ServiceRequest| ok(req.into_response(HttpResponse::Ok().finish())),
-            )),
-        )
-        .await;
+        let srv =
+            init_service(
+                App::new().service(web::service("/test").name("test").finish(
+                    |req: ServiceRequest| ok(req.into_response(HttpResponse::Ok().finish())),
+                )),
+            )
+            .await;
         let req = TestRequest::with_uri("/test").to_request();
         let resp = srv.call(req).await.unwrap();
         assert_eq!(resp.status(), http::StatusCode::OK);
 
-        let srv = init_service(
-            App::new().service(web::service("/test").guard(guard::Get()).finish(
-                |req: ServiceRequest| ok(req.into_response(HttpResponse::Ok().finish())),
-            )),
-        )
-        .await;
+        let srv =
+            init_service(
+                App::new().service(web::service("/test").guard(guard::Get()).finish(
+                    |req: ServiceRequest| ok(req.into_response(HttpResponse::Ok().finish())),
+                )),
+            )
+            .await;
         let req = TestRequest::with_uri("/test")
             .method(http::Method::PUT)
             .to_request();
@@ -701,18 +734,19 @@ mod tests {
     #[allow(deprecated)]
     #[actix_rt::test]
     async fn test_service_data() {
-        let srv =
-            init_service(
-                App::new()
-                    .data(42u32)
-                    .service(web::service("/test").name("test").finish(
-                        |req: ServiceRequest| {
+        let srv = init_service(
+            App::new()
+                .data(42u32)
+                .service(
+                    web::service("/test")
+                        .name("test")
+                        .finish(|req: ServiceRequest| {
                             assert_eq!(req.app_data::<web::Data<u32>>().unwrap().as_ref(), &42);
                             ok(req.into_response(HttpResponse::Ok().finish()))
-                        },
-                    )),
-            )
-            .await;
+                        }),
+                ),
+        )
+        .await;
         let req = TestRequest::with_uri("/test").to_request();
         let resp = srv.call(req).await.unwrap();
         assert_eq!(resp.status(), http::StatusCode::OK);
@@ -743,9 +777,7 @@ mod tests {
     async fn test_services_macro() {
         let scoped = services![
             web::service("/scoped_test1").name("scoped_test1").finish(
-                |req: ServiceRequest| async {
-                    Ok(req.into_response(HttpResponse::Ok().finish()))
-                }
+                |req: ServiceRequest| async { Ok(req.into_response(HttpResponse::Ok().finish())) }
             ),
             web::resource("/scoped_test2").to(|| async { "test2" }),
         ];
@@ -831,9 +863,7 @@ mod tests {
                     svc.call(req)
                 })
                 .route("/", web::get().to(|| async { "" }))
-                .service(
-                    web::resource("/resource1/{name}/index.html").route(web::get().to(index)),
-                ),
+                .service(web::resource("/resource1/{name}/index.html").route(web::get().to(index))),
         )
         .await;
 

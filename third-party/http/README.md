@@ -17,7 +17,7 @@ To use `http`, first add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-http = "0.2"
+http = "1.0"
 ```
 
 Next, add this to your crate:
@@ -60,12 +60,18 @@ fn main() {
 }
 ```
 
+# Supported Rust Versions
+
+This project follows the [Tokio MSRV][msrv] and is currently set to `1.49`.
+
+[msrv]: https://github.com/tokio-rs/tokio/#supported-rust-versions
+
 # License
 
 Licensed under either of
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or https://apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
 
 # Contribution
 

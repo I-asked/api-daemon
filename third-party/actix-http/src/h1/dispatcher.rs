@@ -8,21 +8,16 @@ use std::{
     task::{Context, Poll},
 };
 
-use actix_codec::{AsyncRead, AsyncWrite, Decoder as _, Encoder as _, Framed, FramedParts};
+use actix_codec::{Framed, FramedParts};
 use actix_rt::time::sleep_until;
 use actix_service::Service;
 use bitflags::bitflags;
 use bytes::{Buf, BytesMut};
 use futures_core::ready;
 use pin_project_lite::pin_project;
-
-use crate::{
-    body::{BodySize, BoxBody, MessageBody},
-    config::ServiceConfig,
-    error::{DispatchError, ParseError, PayloadError},
-    service::HttpFlow,
-    ConnectionType, Error, Extensions, OnConnectData, Request, Response, StatusCode,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::codec::{Decoder as _, Encoder as _};
+use tracing::{error, trace};
 
 use super::{
     codec::Codec,
@@ -31,12 +26,20 @@ use super::{
     timer::TimerState,
     Message, MessageType,
 };
+use crate::{
+    body::{BodySize, BoxBody, MessageBody},
+    config::ServiceConfig,
+    error::{DispatchError, ParseError, PayloadError},
+    service::HttpFlow,
+    Error, Extensions, OnConnectData, Request, Response, StatusCode,
+};
 
 const LW_BUFFER_SIZE: usize = 1024;
 const HW_BUFFER_SIZE: usize = 1024 * 8;
 const MAX_PIPELINED_MESSAGES: usize = 16;
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     pub struct Flags: u8 {
         /// Set when stream is read for first time.
         const STARTED          = 0b0000_0001;
@@ -209,9 +212,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => write!(f, "State::None"),
-            Self::ExpectCall { .. } => {
-                f.debug_struct("State::ExpectCall").finish_non_exhaustive()
-            }
+            Self::ExpectCall { .. } => f.debug_struct("State::ExpectCall").finish_non_exhaustive(),
             Self::ServiceCall { .. } => {
                 f.debug_struct("State::ServiceCall").finish_non_exhaustive()
             }
@@ -272,9 +273,7 @@ where
 
                     head_timer: TimerState::new(config.client_request_deadline().is_some()),
                     ka_timer: TimerState::new(config.keep_alive().enabled()),
-                    shutdown_timer: TimerState::new(
-                        config.client_disconnect_deadline().is_some(),
-                    ),
+                    shutdown_timer: TimerState::new(config.client_disconnect_deadline().is_some()),
 
                     io: Some(io),
                     read_buf: BytesMut::with_capacity(HW_BUFFER_SIZE),
@@ -336,7 +335,7 @@ where
         while written < len {
             match io.as_mut().poll_write(cx, &write_buf[written..])? {
                 Poll::Ready(0) => {
-                    log::error!("write zero; closing");
+                    error!("write zero; closing");
                     return Poll::Ready(Err(io::Error::new(io::ErrorKind::WriteZero, "")));
                 }
 
@@ -374,8 +373,6 @@ where
 
                 DispatchError::Io(err)
             })?;
-
-        this.flags.set(Flags::KEEP_ALIVE, this.codec.keep_alive());
 
         Ok(size)
     }
@@ -454,12 +451,15 @@ where
                     }
 
                     // return with upgrade request and poll it exclusively
-                    Some(DispatcherMessage::Upgrade(req)) => {
-                        return Ok(PollResponse::Upgrade(req))
-                    }
+                    Some(DispatcherMessage::Upgrade(req)) => return Ok(PollResponse::Upgrade(req)),
 
                     // all messages are dealt with
-                    None => return Ok(PollResponse::DoNothing),
+                    None => {
+                        // start keep-alive if last request allowed it
+                        this.flags.set(Flags::KEEP_ALIVE, this.codec.keep_alive());
+
+                        return Ok(PollResponse::DoNothing);
+                    }
                 },
 
                 StateProj::ServiceCall { fut } => {
@@ -565,7 +565,7 @@ where
                 }
 
                 StateProj::ExpectCall { fut } => {
-                    log::trace!("  calling expect service");
+                    trace!("  calling expect service");
 
                     match fut.poll(cx) {
                         // expect resolved. write continue to buffer and set InnerDispatcher state
@@ -668,9 +668,7 @@ where
                 }
 
                 _ => {
-                    unreachable!(
-                        "State must be set to ServiceCall or ExceptCall in handle_request"
-                    )
+                    unreachable!("State must be set to ServiceCall or ExceptCall in handle_request")
                 }
             }
         }
@@ -679,84 +677,20 @@ where
     /// Process one incoming request.
     ///
     /// Returns true if any meaningful work was done.
-    fn poll_request(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Result<bool, DispatchError> {
+    fn poll_request(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<bool, DispatchError> {
         let pipeline_queue_full = self.messages.len() >= MAX_PIPELINED_MESSAGES;
         let can_not_read = !self.can_read(cx);
 
         // limit amount of non-processed requests
-        if pipeline_queue_full {
+        if pipeline_queue_full || can_not_read {
             return Ok(false);
         }
 
         let mut this = self.as_mut().project();
 
-        if can_not_read {
-            log::debug!("cannot read request payload");
-
-            if let Some(sender) = &this.payload {
-                // ...maybe handler does not want to read any more payload...
-                if let PayloadStatus::Dropped = sender.need_read(cx) {
-                    log::debug!("handler dropped payload early; attempt to clean connection");
-                    // ...in which case poll request payload a few times
-                    loop {
-                        match this.codec.decode(this.read_buf)? {
-                            Some(msg) => {
-                                match msg {
-                                    // payload decoded did not yield EOF yet
-                                    Message::Chunk(Some(_)) => {
-                                        // if non-clean connection, next loop iter will detect empty
-                                        // read buffer and close connection
-                                    }
-
-                                    // connection is in clean state for next request
-                                    Message::Chunk(None) => {
-                                        log::debug!("connection successfully cleaned");
-
-                                        // reset dispatcher state
-                                        let _ = this.payload.take();
-                                        this.state.set(State::None);
-
-                                        // break out of payload decode loop
-                                        break;
-                                    }
-
-                                    // Either whole payload is read and loop is broken or more data
-                                    // was expected in which case connection is closed. In both
-                                    // situations dispatcher cannot get here.
-                                    Message::Item(_) => {
-                                        unreachable!("dispatcher is in payload receive state")
-                                    }
-                                }
-                            }
-
-                            // not enough info to decide if connection is going to be clean or not
-                            None => {
-                                log::error!(
-                                    "handler did not read whole payload and dispatcher could not \
-                                    drain read buf; return 500 and close connection"
-                                );
-
-                                this.flags.insert(Flags::SHUTDOWN);
-                                let mut res = Response::internal_server_error().drop_body();
-                                res.head_mut().set_connection_type(ConnectionType::Close);
-                                this.messages.push_back(DispatcherMessage::Error(res));
-                                *this.error = Some(DispatchError::HandlerDroppedPayload);
-                                return Ok(true);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // can_not_read and no request payload
-                return Ok(false);
-            }
-        }
-
         let mut updated = false;
 
+        // decode from read buf as many full requests as possible
         loop {
             match this.codec.decode(this.read_buf) {
                 Ok(Some(msg)) => {
@@ -809,7 +743,7 @@ where
                             if let Some(ref mut payload) = this.payload {
                                 payload.feed_data(chunk);
                             } else {
-                                log::error!("Internal server error: unexpected payload chunk");
+                                error!("Internal server error: unexpected payload chunk");
                                 this.flags.insert(Flags::READ_DISCONNECT);
                                 this.messages.push_back(DispatcherMessage::Error(
                                     Response::internal_server_error().drop_body(),
@@ -823,7 +757,7 @@ where
                             if let Some(mut payload) = this.payload.take() {
                                 payload.feed_eof();
                             } else {
-                                log::error!("Internal server error: unexpected eof");
+                                error!("Internal server error: unexpected eof");
                                 this.flags.insert(Flags::READ_DISCONNECT);
                                 this.messages.push_back(DispatcherMessage::Error(
                                     Response::internal_server_error().drop_body(),
@@ -840,7 +774,7 @@ where
                 Ok(None) => break,
 
                 Err(ParseError::Io(err)) => {
-                    log::trace!("I/O error: {}", &err);
+                    trace!("I/O error: {}", &err);
                     self.as_mut().client_disconnected();
                     this = self.as_mut().project();
                     *this.error = Some(DispatchError::Io(err));
@@ -848,7 +782,7 @@ where
                 }
 
                 Err(ParseError::TooLarge) => {
-                    log::trace!("request head was too big; returning 431 response");
+                    trace!("request head was too big; returning 431 response");
 
                     if let Some(mut payload) = this.payload.take() {
                         payload.set_error(PayloadError::Overflow);
@@ -868,7 +802,7 @@ where
                 }
 
                 Err(err) => {
-                    log::trace!("parse error {}", &err);
+                    trace!("parse error {}", &err);
 
                     if let Some(mut payload) = this.payload.take() {
                         payload.set_error(PayloadError::EncodingCorrupted);
@@ -899,10 +833,7 @@ where
             if timer.as_mut().poll(cx).is_ready() {
                 // timeout on first request (slow request) return 408
 
-                log::trace!(
-                    "timed out on slow request; \
-                        replying with 408 and closing connection"
-                );
+                trace!("timed out on slow request; replying with 408 and closing connection");
 
                 let _ = self.as_mut().send_error_response(
                     Response::with_body(StatusCode::REQUEST_TIMEOUT, ()),
@@ -916,10 +847,7 @@ where
         Ok(())
     }
 
-    fn poll_ka_timer(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Result<(), DispatchError> {
+    fn poll_ka_timer(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), DispatchError> {
         let this = self.as_mut().project();
         if let TimerState::Active { timer } = this.ka_timer {
             debug_assert!(
@@ -945,7 +873,7 @@ where
             // keep-alive timer has timed out
             if timer.as_mut().poll(cx).is_ready() {
                 // no tasks at hand
-                log::trace!("timer timed out; closing connection");
+                trace!("timer timed out; closing connection");
                 this.flags.insert(Flags::SHUTDOWN);
 
                 if let Some(deadline) = this.config.client_disconnect_deadline() {
@@ -975,7 +903,7 @@ where
 
             // timed-out during shutdown; drop connection
             if timer.as_mut().poll(cx).is_ready() {
-                log::trace!("timed-out during shutdown");
+                trace!("timed-out during shutdown");
                 return Err(DispatchError::DisconnectTimeout);
             }
         }
@@ -984,10 +912,7 @@ where
     }
 
     /// Poll head, keep-alive, and disconnect timer.
-    fn poll_timers(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Result<(), DispatchError> {
+    fn poll_timers(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<(), DispatchError> {
         self.as_mut().poll_head_timer(cx)?;
         self.as_mut().poll_ka_timer(cx)?;
         self.as_mut().poll_shutdown_timer(cx)?;
@@ -1001,10 +926,7 @@ where
     /// - `std::io::ErrorKind::ConnectionReset` after partial read;
     /// - all data read done.
     #[inline(always)] // TODO: bench this inline
-    fn read_available(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Result<bool, DispatchError> {
+    fn read_available(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Result<bool, DispatchError> {
         let this = self.project();
 
         if this.flags.contains(Flags::READ_DISCONNECT) {
@@ -1036,9 +958,11 @@ where
                 //
                 // A Request head too large to parse is only checked on `httparse::Status::Partial`.
 
-                if this.payload.is_none() {
-                    // When dispatcher has a payload the responsibility of wake up it would be shift
-                    // to h1::payload::Payload.
+                match this.payload {
+                    // When dispatcher has a payload the responsibility of wake ups is shifted to
+                    // `h1::payload::Payload` unless the payload is needing a read, in which case it
+                    // might not have access to the waker and could result in the dispatcher
+                    // getting stuck until timeout.
                     //
                     // Reason:
                     // Self wake up when there is payload would waste poll and/or result in
@@ -1049,7 +973,8 @@ where
                     // read anymore. At this case read_buf could always remain beyond
                     // MAX_BUFFER_SIZE and self wake up would be busy poll dispatcher and
                     // waste resources.
-                    cx.waker().wake_by_ref();
+                    Some(ref p) if p.need_read(cx) != PayloadStatus::Read => {}
+                    _ => cx.waker().wake_by_ref(),
                 }
 
                 return Ok(false);
@@ -1061,7 +986,7 @@ where
                 this.read_buf.reserve(HW_BUFFER_SIZE - remaining);
             }
 
-            match actix_codec::poll_read_buf(io.as_mut(), cx, this.read_buf) {
+            match tokio_util::io::poll_read_buf(io.as_mut(), cx, this.read_buf) {
                 Poll::Ready(Ok(n)) => {
                     this.flags.remove(Flags::FINISHED);
 
@@ -1134,12 +1059,12 @@ where
 
         match this.inner.project() {
             DispatcherStateProj::Upgrade { fut: upgrade } => upgrade.poll(cx).map_err(|err| {
-                log::error!("Upgrade handler error: {}", err);
+                error!("Upgrade handler error: {}", err);
                 DispatchError::Upgrade
             }),
 
             DispatcherStateProj::Normal { mut inner } => {
-                log::trace!("start flags: {:?}", &inner.flags);
+                trace!("start flags: {:?}", &inner.flags);
 
                 trace_timer_states(
                     "start",
@@ -1246,7 +1171,7 @@ where
 
                     // client is gone
                     if inner.flags.contains(Flags::WRITE_DISCONNECT) {
-                        log::trace!("client is gone; disconnecting");
+                        trace!("client is gone; disconnecting");
                         return Poll::Ready(Ok(()));
                     }
 
@@ -1255,14 +1180,14 @@ where
 
                     // read half is closed; we do not process any responses
                     if inner_p.flags.contains(Flags::READ_DISCONNECT) && state_is_none {
-                        log::trace!("read half closed; start shutdown");
+                        trace!("read half closed; start shutdown");
                         inner_p.flags.insert(Flags::SHUTDOWN);
                     }
 
                     // keep-alive and stream errors
                     if state_is_none && inner_p.write_buf.is_empty() {
                         if let Some(err) = inner_p.error.take() {
-                            log::error!("stream error: {}", &err);
+                            error!("stream error: {}", &err);
                             return Poll::Ready(Err(err));
                         }
 
@@ -1291,7 +1216,7 @@ where
                     Poll::Pending
                 };
 
-                log::trace!("end flags: {:?}", &inner.flags);
+                trace!("end flags: {:?}", &inner.flags);
 
                 poll
             }
@@ -1306,17 +1231,17 @@ fn trace_timer_states(
     ka_timer: &TimerState,
     shutdown_timer: &TimerState,
 ) {
-    log::trace!("{} timers:", label);
+    trace!("{} timers:", label);
 
     if head_timer.is_enabled() {
-        log::trace!("  head {}", &head_timer);
+        trace!("  head {}", &head_timer);
     }
 
     if ka_timer.is_enabled() {
-        log::trace!("  keep-alive {}", &ka_timer);
+        trace!("  keep-alive {}", &ka_timer);
     }
 
     if shutdown_timer.is_enabled() {
-        log::trace!("  shutdown {}", &shutdown_timer);
+        trace!("  shutdown {}", &shutdown_timer);
     }
 }

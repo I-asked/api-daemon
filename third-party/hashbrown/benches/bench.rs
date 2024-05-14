@@ -38,7 +38,7 @@ impl Iterator for RandomKeys {
     type Item = usize;
     fn next(&mut self) -> Option<usize> {
         // Add 1 then multiply by some 32 bit prime.
-        self.state = self.state.wrapping_add(1).wrapping_mul(3787392781);
+        self.state = self.state.wrapping_add(1).wrapping_mul(3_787_392_781);
         Some(self.state)
     }
 }
@@ -311,7 +311,7 @@ fn rehash_in_place(b: &mut Bencher) {
 
         // Each loop triggers one rehash
         for _ in 0..10 {
-            for i in 0..224 {
+            for i in 0..223 {
                 set.insert(i);
             }
 

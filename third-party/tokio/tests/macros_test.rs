@@ -1,4 +1,4 @@
-#![cfg(feature = "full")]
+#![cfg(all(feature = "full", not(target_os = "wasi")))] // Wasi doesn't support threading
 
 use tokio::test;
 
@@ -25,10 +25,16 @@ async fn unused_braces_test() { assert_eq!(1 + 1, 2) }
 fn trait_method() {
     trait A {
         fn f(self);
+
+        fn g(self);
     }
     impl A for () {
         #[tokio::main]
-        async fn f(self) {}
+        async fn f(self) {
+            self.g()
+        }
+
+        fn g(self) {}
     }
     ().f()
 }
@@ -50,6 +56,7 @@ pub async fn issue_4175_test() -> std::io::Result<()> {
 }
 
 // https://github.com/tokio-rs/tokio/issues/4175
+#[allow(clippy::let_unit_value)]
 pub mod clippy_semicolon_if_nothing_returned {
     #![deny(clippy::semicolon_if_nothing_returned)]
 
@@ -69,4 +76,19 @@ pub mod clippy_semicolon_if_nothing_returned {
     pub async fn empty() {
         // To trigger clippy::semicolon_if_nothing_returned lint, the block needs to contain newline.
     }
+}
+
+// https://github.com/tokio-rs/tokio/issues/5243
+pub mod issue_5243 {
+    macro_rules! mac {
+        (async fn $name:ident() $b:block) => {
+            #[::tokio::test]
+            async fn $name() {
+                $b
+            }
+        };
+    }
+    mac!(
+        async fn foo() {}
+    );
 }

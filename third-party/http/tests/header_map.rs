@@ -190,7 +190,7 @@ fn drain_entry() {
         assert_eq!(vals[1], "world2");
     }
 
-    assert_eq!(5-2+1, headers.len());
+    assert_eq!(5 - 2 + 1, headers.len());
 }
 
 #[test]
@@ -346,6 +346,8 @@ const STD: &'static [HeaderName] = &[
     ALT_SVC,
     AUTHORIZATION,
     CACHE_CONTROL,
+    CACHE_STATUS,
+    CDN_CACHE_CONTROL,
     CONNECTION,
     CONTENT_DISPOSITION,
     CONTENT_ENCODING,
@@ -424,7 +426,6 @@ fn value_htab() {
     HeaderValue::from_static("hello\tworld");
     HeaderValue::from_str("hello\tworld").unwrap();
 }
-
 
 #[test]
 fn remove_multiple_a() {
@@ -568,7 +569,8 @@ fn remove_entry_multi_3_others() {
 }
 
 fn remove_all_values<K>(headers: &mut HeaderMap, key: K) -> Vec<HeaderValue>
-    where K: IntoHeaderName
+where
+    K: IntoHeaderName,
 {
     match headers.entry(key) {
         Entry::Occupied(e) => e.remove_entry_mult().1.collect(),
@@ -627,10 +629,22 @@ fn remove_entry_3_others_b() {
 }
 
 fn remove_values<K>(headers: &mut HeaderMap, key: K) -> Option<HeaderValue>
-    where K: IntoHeaderName
+where
+    K: IntoHeaderName,
 {
     match headers.entry(key) {
         Entry::Occupied(e) => Some(e.remove_entry().1),
         Entry::Vacant(_) => None,
     }
+}
+
+#[test]
+fn ensure_miri_sharedreadonly_not_violated() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("chunky-trailer"),
+        HeaderValue::from_static("header data"),
+    );
+
+    let _foo = &headers.iter().next();
 }

@@ -6,6 +6,7 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 
+use core_foundation_sys::base::CFTypeRef;
 use security_framework_sys::base::errSecNoTrustSettings;
 use security_framework_sys::base::errSecSuccess;
 use security_framework_sys::trust_settings::*;
@@ -19,13 +20,14 @@ use crate::cvt;
 
 /// Which set of trust settings to query
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
 pub enum Domain {
     /// Per-user trust settings
-    User,
+    User = kSecTrustSettingsDomainUser,
     /// Locally administered, system-wide trust settings
-    Admin,
+    Admin = kSecTrustSettingsDomainAdmin,
     /// System trust settings
-    System,
+    System = kSecTrustSettingsDomainSystem,
 }
 
 impl From<Domain> for SecTrustSettingsDomain {
@@ -81,13 +83,14 @@ pub struct TrustSettings {
 }
 
 impl TrustSettings {
-    /// Create a new TrustSettings for the given domain.
+    /// Create a new `TrustSettings` for the given domain.
     ///
     /// You can call `iter()` to discover the certificates with settings in this domain.
     ///
     /// Then you can call `tls_trust_settings_for_certificate()` with a given certificate
     /// to learn what the aggregate trust setting for that certificate within this domain.
     #[inline(always)]
+    #[must_use]
     pub fn new(domain: Domain) -> Self {
         Self { domain }
     }
@@ -109,6 +112,32 @@ impl TrustSettings {
         };
 
         Ok(TrustSettingsIter { index: 0, array })
+    }
+
+    ///set trust settings to ""always trust this root certificate regardless of use.".
+    /// Sets the trust settings for the provided certificate to "always trust this root certificate
+    /// regardless of use."
+    ///
+    /// This method configures the trust settings for the specified certificate, indicating that it should
+    /// always be trusted as a TLS root certificate, regardless of its usage.
+    ///
+    /// If successful, the trust settings are updated for the certificate in the given domain. If the
+    /// certificate had no previous trust settings in the domain, new trust settings are created. If the
+    /// certificate had existing trust settings, they are replaced with the new settings.
+    ///
+    /// It is not possible to modify per-user trust settings when not running in a GUI
+    /// environment, if you try it will return error `2070: errSecInternalComponent`
+    #[cfg(target_os="macos")]
+    pub fn set_trust_settings_always(&self, cert: &SecCertificate) -> Result<()> {
+        let domain = self.domain;
+        let trust_settings: CFTypeRef = ptr::null_mut();
+        cvt(unsafe {
+            SecTrustSettingsSetTrustSettings(
+                cert.as_CFTypeRef() as *mut _,
+                domain.into(),
+                trust_settings,
+            )
+        })
     }
 
     /// Returns the aggregate trust setting for the given certificate.
@@ -141,8 +170,8 @@ impl TrustSettings {
                 let ssl_policy_name = CFString::from_static_string("sslServer");
 
                 let maybe_name: Option<CFString> = settings
-                    .find(policy_name_key.as_CFTypeRef() as *const _)
-                    .map(|name| unsafe { CFString::wrap_under_get_rule(*name as *const _) });
+                    .find(policy_name_key.as_CFTypeRef().cast())
+                    .map(|name| unsafe { CFString::wrap_under_get_rule((*name).cast()) });
 
                 matches!(maybe_name, Some(ref name) if name != &ssl_policy_name)
             };
@@ -155,8 +184,8 @@ impl TrustSettings {
             let maybe_trust_result = {
                 let settings_result_key = CFString::from_static_string("kSecTrustSettingsResult");
                 settings
-                    .find(settings_result_key.as_CFTypeRef() as *const _)
-                    .map(|num| unsafe { CFNumber::wrap_under_get_rule(*num as *const _) })
+                    .find(settings_result_key.as_CFTypeRef().cast())
+                    .map(|num| unsafe { CFNumber::wrap_under_get_rule((*num).cast()) })
                     .and_then(|num| num.to_i64())
             };
 
@@ -212,12 +241,12 @@ mod test {
     use crate::test::certificate;
 
     fn list_for_domain(domain: Domain) {
-        println!("--- domain: {:?}", domain);
+        println!("--- domain: {domain:?}");
         let ts = TrustSettings::new(domain);
         let iterator = ts.iter().unwrap();
 
         for (i, cert) in iterator.enumerate() {
-            println!("cert({:?}) = {:?}", i, cert);
+            println!("cert({i:?}) = {cert:?}");
             println!("  settings = {:?}", ts.tls_trust_settings_for_certificate(&cert));
         }
         println!("---");
@@ -249,12 +278,13 @@ mod test {
     #[test]
     fn test_isrg_root_exists_and_is_trusted() {
         let ts = TrustSettings::new(Domain::System);
-        assert_eq!(ts
-            .iter()
-            .unwrap()
-            .find(|cert| cert.subject_summary() == "ISRG Root X1")
-            .and_then(|cert| ts.tls_trust_settings_for_certificate(&cert).unwrap()),
-            None);
+        assert_eq!(
+            ts.iter()
+                .unwrap()
+                .find(|cert| cert.subject_summary() == "ISRG Root X1")
+                .and_then(|cert| ts.tls_trust_settings_for_certificate(&cert).unwrap()),
+            None
+        );
         // ^ this is a case where None means "always trust", according to Apple docs:
         //
         // "Note that an empty Trust Settings array means "always trust this cert,
@@ -272,3 +302,4 @@ mod test {
                    Some("The specified item could not be found in the keychain.".into()));
     }
 }
+

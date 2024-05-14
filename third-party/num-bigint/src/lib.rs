@@ -8,10 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! A Big integer (signed version: `BigInt`, unsigned version: `BigUint`).
+//! Big Integer Types for Rust
 //!
-//! A `BigUint` is represented as a vector of `BigDigit`s.
-//! A `BigInt` is a combination of `BigUint` and `Sign`.
+//! * A [`BigUint`] is unsigned and represented as a vector of digits.
+//! * A [`BigInt`] is signed and is a combination of [`BigUint`] and [`Sign`].
 //!
 //! Common numerical operations are overloaded, so we can treat them
 //! the same way we treat other numbers.
@@ -21,17 +21,16 @@
 //! ```rust
 //! # fn main() {
 //! use num_bigint::BigUint;
-//! use num_traits::{Zero, One};
-//! use std::mem::replace;
+//! use num_traits::One;
 //!
 //! // Calculate large fibonacci numbers.
 //! fn fib(n: usize) -> BigUint {
-//!     let mut f0: BigUint = Zero::zero();
-//!     let mut f1: BigUint = One::one();
+//!     let mut f0 = BigUint::ZERO;
+//!     let mut f1 = BigUint::one();
 //!     for _ in 0..n {
 //!         let f2 = f0 + &f1;
-//!         // This is a low cost way of swapping f0 with f1 and f1 with f2.
-//!         f0 = replace(&mut f1, f2);
+//!         f0 = f1;
+//!         f1 = f2;
 //!     }
 //!     f0
 //! }
@@ -82,7 +81,7 @@
 //!
 //! ## Compatibility
 //!
-//! The `num-bigint` crate is tested for rustc 1.31 and greater.
+//! The `num-bigint` crate is tested for rustc 1.60 and greater.
 
 #![doc(html_root_url = "https://docs.rs/num-bigint/0.4")]
 #![warn(rust_2018_idioms)]
@@ -95,7 +94,7 @@ extern crate std;
 #[cfg(feature = "std")]
 mod std_alloc {
     pub(crate) use std::borrow::Cow;
-    #[cfg(any(feature = "quickcheck"))]
+    #[cfg(feature = "quickcheck")]
     pub(crate) use std::boxed::Box;
     pub(crate) use std::string::String;
     pub(crate) use std::vec::Vec;
@@ -108,7 +107,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 mod std_alloc {
     pub(crate) use alloc::borrow::Cow;
-    #[cfg(any(feature = "quickcheck"))]
+    #[cfg(feature = "quickcheck")]
     pub(crate) use alloc::boxed::Box;
     pub(crate) use alloc::string::String;
     pub(crate) use alloc::vec::Vec;
@@ -184,13 +183,11 @@ impl Error for ParseBigIntError {
 }
 
 /// The error type returned when a checked conversion regarding big integer fails.
-#[cfg(has_try_from)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TryFromBigIntError<T> {
     original: T,
 }
 
-#[cfg(has_try_from)]
 impl<T> TryFromBigIntError<T> {
     fn new(original: T) -> Self {
         TryFromBigIntError { original }
@@ -202,15 +199,12 @@ impl<T> TryFromBigIntError<T> {
 
     /// Extract the original value, if available. The value will be available
     /// if the type before conversion was either [`BigInt`] or [`BigUint`].
-    ///
-    /// [`BigInt`]: struct.BigInt.html
-    /// [`BigUint`]: struct.BigUint.html
     pub fn into_original(self) -> T {
         self.original
     }
 }
 
-#[cfg(all(feature = "std", has_try_from))]
+#[cfg(feature = "std")]
 impl<T> std::error::Error for TryFromBigIntError<T>
 where
     T: fmt::Debug,
@@ -220,7 +214,6 @@ where
     }
 }
 
-#[cfg(has_try_from)]
 impl<T> fmt::Display for TryFromBigIntError<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.__description().fmt(f)
@@ -240,36 +233,31 @@ pub use crate::bigint::ToBigInt;
 pub use crate::bigrand::{RandBigInt, RandomBits, UniformBigInt, UniformBigUint};
 
 mod big_digit {
-    /// A `BigDigit` is a `BigUint`'s composing element.
-    #[cfg(not(u64_digit))]
-    pub(crate) type BigDigit = u32;
-    #[cfg(u64_digit)]
-    pub(crate) type BigDigit = u64;
+    // A [`BigDigit`] is a [`BigUint`]'s composing element.
+    cfg_digit!(
+        pub(crate) type BigDigit = u32;
+        pub(crate) type BigDigit = u64;
+    );
 
-    /// A `DoubleBigDigit` is the internal type used to do the computations.  Its
-    /// size is the double of the size of `BigDigit`.
-    #[cfg(not(u64_digit))]
-    pub(crate) type DoubleBigDigit = u64;
-    #[cfg(u64_digit)]
-    pub(crate) type DoubleBigDigit = u128;
+    // A [`DoubleBigDigit`] is the internal type used to do the computations.  Its
+    // size is the double of the size of [`BigDigit`].
+    cfg_digit!(
+        pub(crate) type DoubleBigDigit = u64;
+        pub(crate) type DoubleBigDigit = u128;
+    );
 
-    /// A `SignedDoubleBigDigit` is the signed version of `DoubleBigDigit`.
-    #[cfg(not(u64_digit))]
-    pub(crate) type SignedDoubleBigDigit = i64;
-    #[cfg(u64_digit)]
-    pub(crate) type SignedDoubleBigDigit = i128;
+    // A [`SignedDoubleBigDigit`] is the signed version of [`DoubleBigDigit`].
+    cfg_digit!(
+        pub(crate) type SignedDoubleBigDigit = i64;
+        pub(crate) type SignedDoubleBigDigit = i128;
+    );
 
-    // `DoubleBigDigit` size dependent
-    #[cfg(not(u64_digit))]
-    pub(crate) const BITS: u8 = 32;
-    #[cfg(u64_digit)]
-    pub(crate) const BITS: u8 = 64;
-
+    pub(crate) const BITS: u8 = BigDigit::BITS as u8;
     pub(crate) const HALF_BITS: u8 = BITS / 2;
     pub(crate) const HALF: BigDigit = (1 << HALF_BITS) - 1;
 
-    const LO_MASK: DoubleBigDigit = (1 << BITS) - 1;
-    pub(crate) const MAX: BigDigit = LO_MASK as BigDigit;
+    pub(crate) const MAX: BigDigit = BigDigit::MAX;
+    const LO_MASK: DoubleBigDigit = MAX as DoubleBigDigit;
 
     #[inline]
     fn get_hi(n: DoubleBigDigit) -> BigDigit {
@@ -280,13 +268,13 @@ mod big_digit {
         (n & LO_MASK) as BigDigit
     }
 
-    /// Split one `DoubleBigDigit` into two `BigDigit`s.
+    /// Split one [`DoubleBigDigit`] into two [`BigDigit`]s.
     #[inline]
     pub(crate) fn from_doublebigdigit(n: DoubleBigDigit) -> (BigDigit, BigDigit) {
         (get_hi(n), get_lo(n))
     }
 
-    /// Join two `BigDigit`s into one `DoubleBigDigit`
+    /// Join two [`BigDigit`]s into one [`DoubleBigDigit`].
     #[inline]
     pub(crate) fn to_doublebigdigit(hi: BigDigit, lo: BigDigit) -> DoubleBigDigit {
         DoubleBigDigit::from(lo) | (DoubleBigDigit::from(hi) << BITS)

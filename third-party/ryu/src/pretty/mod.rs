@@ -1,11 +1,11 @@
 mod exponent;
 mod mantissa;
 
-use self::exponent::*;
-use self::mantissa::*;
+use self::exponent::{write_exponent2, write_exponent3};
+use self::mantissa::{write_mantissa, write_mantissa_long};
 use crate::common;
-use crate::d2s::{self, *};
-use crate::f2s::*;
+use crate::d2s::{self, d2d, DOUBLE_EXPONENT_BITS, DOUBLE_MANTISSA_BITS};
+use crate::f2s::{f2d, FLOAT_EXPONENT_BITS, FLOAT_MANTISSA_BITS};
 use core::ptr;
 #[cfg(feature = "no-panic")]
 use no_panic::no_panic;
@@ -160,8 +160,7 @@ pub unsafe fn format32(f: f32, result: *mut u8) -> usize {
     let bits = f.to_bits();
     let sign = ((bits >> (FLOAT_MANTISSA_BITS + FLOAT_EXPONENT_BITS)) & 1) != 0;
     let ieee_mantissa = bits & ((1u32 << FLOAT_MANTISSA_BITS) - 1);
-    let ieee_exponent =
-        ((bits >> FLOAT_MANTISSA_BITS) & ((1u32 << FLOAT_EXPONENT_BITS) - 1)) as u32;
+    let ieee_exponent = (bits >> FLOAT_MANTISSA_BITS) & ((1u32 << FLOAT_EXPONENT_BITS) - 1);
 
     let mut index = 0isize;
     if sign {

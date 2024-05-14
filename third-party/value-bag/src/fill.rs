@@ -9,7 +9,7 @@
 //! ```
 //! use value_bag::{ValueBag, fill::Slot};
 //!
-//! let value = ValueBag::from_fill(&|slot: &mut Slot| {
+//! let value = ValueBag::from_fill(&|slot: Slot| {
 //!     #[derive(Debug)]
 //!     struct MyShortLivedValue;
 //!
@@ -28,7 +28,7 @@
 //! struct FillDebug;
 //!
 //! impl Fill for FillDebug {
-//!     fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
+//!     fn fill(&self, slot: Slot) -> Result<(), Error> {
 //!         slot.fill_debug(&42i64 as &dyn Debug)
 //!     }
 //! }
@@ -45,12 +45,12 @@ use super::{Error, ValueBag};
 
 impl<'v> ValueBag<'v> {
     /// Get a value from a fillable slot.
-    pub fn from_fill<T>(value: &'v T) -> Self
+    pub const fn from_fill<T>(value: &'v T) -> Self
     where
         T: Fill,
     {
         ValueBag {
-            inner: Internal::Fill { value },
+            inner: Internal::Fill(value),
         }
     }
 }
@@ -62,21 +62,20 @@ impl<'v> ValueBag<'v> {
 /// to perform extra work to determine the concrete type to use.
 pub trait Fill {
     /// Fill a value.
-    fn fill(&self, slot: &mut Slot) -> Result<(), Error>;
+    fn fill(&self, slot: Slot) -> Result<(), Error>;
 }
 
 impl<F> Fill for F
 where
-    F: Fn(&mut Slot) -> Result<(), Error>,
+    F: Fn(Slot) -> Result<(), Error>,
 {
-    fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
+    fn fill(&self, slot: Slot) -> Result<(), Error> {
         (self)(slot)
     }
 }
 
 /// A value slot to fill using the [`Fill`](trait.Fill.html) trait.
 pub struct Slot<'s, 'f> {
-    filled: bool,
     visitor: &'s mut dyn InternalVisitor<'f>,
 }
 
@@ -87,31 +86,21 @@ impl<'s, 'f> fmt::Debug for Slot<'s, 'f> {
 }
 
 impl<'s, 'f> Slot<'s, 'f> {
-    pub(super) fn new(visitor: &'s mut dyn InternalVisitor<'f>) -> Self {
-        Slot {
-            visitor,
-            filled: false,
-        }
+    pub(crate) fn new(visitor: &'s mut dyn InternalVisitor<'f>) -> Self {
+        Slot { visitor }
     }
 
-    pub(super) fn fill<F>(&mut self, f: F) -> Result<(), Error>
+    pub(crate) fn fill<F>(self, f: F) -> Result<(), Error>
     where
         F: FnOnce(&mut dyn InternalVisitor<'f>) -> Result<(), Error>,
     {
-        assert!(!self.filled, "the slot has already been filled");
-        self.filled = true;
-
         f(self.visitor)
     }
 
     /// Fill the slot with a value.
     ///
     /// The given value doesn't need to satisfy any particular lifetime constraints.
-    ///
-    /// # Panics
-    ///
-    /// Calling more than a single `fill` method on this slot will panic.
-    pub fn fill_any<T>(&mut self, value: T) -> Result<(), Error>
+    pub fn fill_any<T>(self, value: T) -> Result<(), Error>
     where
         T: Into<ValueBag<'f>>,
     {
@@ -133,10 +122,10 @@ mod tests {
         struct TestFill;
 
         impl Fill for TestFill {
-            fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
-                let dbg: &dyn fmt::Debug = &1;
+            fn fill(&self, slot: Slot) -> Result<(), Error> {
+                let dbg = &1 as &dyn fmt::Debug;
 
-                slot.fill_debug(&dbg)
+                slot.fill_debug(dbg)
             }
         }
 
@@ -145,40 +134,11 @@ mod tests {
 
     #[test]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    fn fill_value_owned() {
-        struct TestFill;
-
-        impl Fill for TestFill {
-            fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
-                slot.fill_any("a string")
-            }
-        }
-    }
-
-    #[test]
-    #[should_panic]
-    fn fill_multiple_times_panics() {
-        struct BadFill;
-
-        impl Fill for BadFill {
-            fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
-                slot.fill_any(42)?;
-                slot.fill_any(6789)?;
-
-                Ok(())
-            }
-        }
-
-        let _ = ValueBag::from_fill(&BadFill).to_string();
-    }
-
-    #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn fill_cast() {
         struct TestFill;
 
         impl Fill for TestFill {
-            fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
+            fn fill(&self, slot: Slot) -> Result<(), Error> {
                 slot.fill_any("a string")
             }
         }
@@ -193,27 +153,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
-    fn fill_debug() {
-        struct TestFill;
-
-        impl Fill for TestFill {
-            fn fill(&self, slot: &mut Slot) -> Result<(), Error> {
-                slot.fill_any(42u64)
-            }
-        }
-
-        assert_eq!(
-            format!("{:04?}", 42u64),
-            format!("{:04?}", ValueBag::from_fill(&TestFill)),
-        )
-    }
-
-    #[test]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     fn fill_fn_cast() {
         assert_eq!(
             42u64,
-            ValueBag::from_fill(&|slot: &mut Slot| slot.fill_any(42u64))
+            ValueBag::from_fill(&|slot: Slot| slot.fill_any(42u64))
                 .to_u64()
                 .unwrap()
         );
@@ -230,7 +173,7 @@ mod tests {
             format!("{:?}", value),
             format!(
                 "{:?}",
-                ValueBag::from_fill(&|slot: &mut Slot| slot.fill_debug(&value))
+                ValueBag::from_fill(&|slot: Slot| slot.fill_debug(&value))
             )
         );
     }

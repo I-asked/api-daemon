@@ -1,256 +1,67 @@
 /*
 This module generates code to try efficiently convert some arbitrary `T: 'static` into
-a `Primitive`.
-
-In the future when `min_specialization` is stabilized we could use it instead and avoid needing
-the `'static` bound altogether.
+a `Internal`.
 */
 
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 use crate::std::string::String;
 
-use crate::internal::Primitive;
+use crate::ValueBag;
 
-pub(super) fn from_any<'v, T: ?Sized + 'static>(value: &'v T) -> Option<Primitive<'v>> {
-    // When we're on `nightly`, we can use const type ids
-    #[cfg(value_bag_capture_const_type_id)]
-    {
-        use crate::std::any::TypeId;
+// NOTE: The casts for unsized values (str) are dubious here. To really do this properly
+// we need https://github.com/rust-lang/rust/issues/81513
+// NOTE: With some kind of const `Any::is<T>` we could do all this at compile-time
+// Older versions of `value-bag` did this, but the infrastructure just wasn't worth
+// the tiny performance improvement
+use crate::std::any::TypeId;
 
-        macro_rules! to_primitive {
-            ($(
-                $(#[cfg($($cfg:tt)*)])*
-                $ty:ty : ($const_ident:ident, $option_ident:ident),
-            )*) => {
-                trait ToPrimitive<'a>
-                where
-                    Self: 'static,
-                {
-                    const CALL: fn(&'_ &'a Self) -> Option<Primitive<'a>> = {
-                        $(
-                            $(#[cfg($($cfg)*)])*
-                            const $const_ident: TypeId = TypeId::of::<$ty>();
+enum Void {}
 
-                            $(#[cfg($($cfg)*)])*
-                            const $option_ident: TypeId = TypeId::of::<Option<$ty>>();
-                        )*
+#[repr(transparent)]
+struct VoidRef<'a>(*const &'a Void);
 
-                        const STR: TypeId = TypeId::of::<str>();
+macro_rules! check_type_ids {
+    (&$l:lifetime $v:ident => $(
+        $(#[cfg($($cfg:tt)*)])*
+            $ty:ty,
+        )*
+    ) => {
+        $(
+            $(#[cfg($($cfg)*)])*
+            if TypeId::of::<T>() == TypeId::of::<$ty>() {
+                // SAFETY: We verify the value is $ty before casting
+                let v = unsafe { *($v.0 as *const & $l $ty) };
 
-                        match TypeId::of::<Self>() {
-                            $(
-                                $(#[cfg($($cfg)*)])*
-                                $const_ident => |v| Some(Primitive::from(unsafe { &*(*v as *const Self as *const $ty) })),
-
-                                $(#[cfg($($cfg)*)])*
-                                $option_ident => |v| Some({
-                                    let v = unsafe { &*(*v as *const Self as *const Option<$ty>) };
-                                    match v {
-                                        Some(v) => Primitive::from(v),
-                                        None => Primitive::None,
-                                    }
-                                }),
-                            )*
-
-                            STR => |v| Some(Primitive::from(unsafe { &**(v as *const &'a Self as *const &'a str) })),
-
-                            _ => |_| None,
-                        }
-                    };
-
-                    fn to_primitive(&'a self) -> Option<Primitive<'a>> {
-                        (Self::CALL)(&self)
-                    }
-                }
-
-                impl<'a, T: ?Sized + 'static> ToPrimitive<'a> for T {}
+                return Some(ValueBag::from(v));
             }
-        }
+        )*
+        $(
+            $(#[cfg($($cfg)*)])*
+            if TypeId::of::<T>() == TypeId::of::<Option<$ty>>() {
+                // SAFETY: We verify the value is Option<$ty> before casting
+                let v = unsafe { *($v.0 as *const & $l Option<$ty>) };
 
-        // NOTE: The types here *must* match the ones used below when `const_type_id` is not available
-        to_primitive![
-            usize: (USIZE, OPTION_USIZE),
-            u8: (U8, OPTION_U8),
-            u16: (U16, OPTION_U16),
-            u32: (U32, OPTION_U32),
-            u64: (U64, OPTION_U64),
-            u128: (U128, OPTION_U128),
-
-            isize: (ISIZE, OPTION_ISIZE),
-            i8: (I8, OPTION_I8),
-            i16: (I16, OPTION_I16),
-            i32: (I32, OPTION_I32),
-            i64: (I64, OPTION_I64),
-            i128: (I128, OPTION_I128),
-
-            f32: (F32, OPTION_F32),
-            f64: (F64, OPTION_F64),
-
-            char: (CHAR, OPTION_CHAR),
-            bool: (BOOL, OPTION_BOOL),
-
-            &'static str: (STATIC_STR, OPTION_STATIC_STR),
-            // We deal with `str` separately because it's unsized
-            // str: (STR),
-            #[cfg(feature = "std")]
-            String: (STRING, OPTION_STRING),
-        ];
-
-        value.to_primitive()
-    }
-
-    // When we're not on `nightly`, use the ctor crate
-    // For `miri` though, we can't rely on `ctor` so use the fallback
-    #[cfg(all(value_bag_capture_ctor, not(miri)))]
-    {
-        #![allow(unused_unsafe)]
-
-        use ctor::ctor;
-
-        use crate::std::{
-            any::{Any, TypeId},
-            cmp::Ordering,
-        };
-
-        // From: https://github.com/servo/rust-quicksort
-        // We use this algorithm instead of the standard library's `sort_by` because it
-        // works in no-std environments
-        fn quicksort_helper<T, F>(arr: &mut [T], left: isize, right: isize, compare: &F)
-        where
-            F: Fn(&T, &T) -> Ordering,
-        {
-            if right <= left {
-                return;
-            }
-
-            let mut i: isize = left - 1;
-            let mut j: isize = right;
-            let mut p: isize = i;
-            let mut q: isize = j;
-            unsafe {
-                let v: *mut T = &mut arr[right as usize];
-                loop {
-                    i += 1;
-                    while compare(&arr[i as usize], &*v) == Ordering::Less {
-                        i += 1
-                    }
-                    j -= 1;
-                    while compare(&*v, &arr[j as usize]) == Ordering::Less {
-                        if j == left {
-                            break;
-                        }
-                        j -= 1;
-                    }
-                    if i >= j {
-                        break;
-                    }
-                    arr.swap(i as usize, j as usize);
-                    if compare(&arr[i as usize], &*v) == Ordering::Equal {
-                        p += 1;
-                        arr.swap(p as usize, i as usize)
-                    }
-                    if compare(&*v, &arr[j as usize]) == Ordering::Equal {
-                        q -= 1;
-                        arr.swap(j as usize, q as usize)
-                    }
+                if let Some(v) = v {
+                    return Some(ValueBag::from(v));
+                } else {
+                    return Some(ValueBag::empty());
                 }
             }
+        )*
+    };
+}
 
-            arr.swap(i as usize, right as usize);
-            j = i - 1;
-            i += 1;
-            let mut k: isize = left;
-            while k < p {
-                arr.swap(k as usize, j as usize);
-                k += 1;
-                j -= 1;
-                assert!(k < arr.len() as isize);
-            }
-            k = right - 1;
-            while k > q {
-                arr.swap(i as usize, k as usize);
-                k -= 1;
-                i += 1;
-                assert!(k != 0);
-            }
+pub(in crate::internal) fn from_any<'v, T: ?Sized + 'static>(value: &'v T) -> Option<ValueBag<'v>> {
+    let type_ids = |v: VoidRef<'v>| {
+        if TypeId::of::<T>() == TypeId::of::<str>() {
+            // SAFETY: We verify the value is str before casting
+            let v = unsafe { *(v.0 as *const &'v str) };
 
-            quicksort_helper(arr, left, j, compare);
-            quicksort_helper(arr, i, right, compare);
+            return Some(ValueBag::from(v));
         }
 
-        fn quicksort_by<T, F>(arr: &mut [T], compare: F)
-        where
-            F: Fn(&T, &T) -> Ordering,
-        {
-            if arr.len() <= 1 {
-                return;
-            }
-
-            let len = arr.len();
-            quicksort_helper(arr, 0, (len - 1) as isize, &compare);
-        }
-
-        enum Void {}
-
-        #[repr(transparent)]
-        struct VoidRef<'a>(*const &'a Void);
-
-        macro_rules! type_ids {
-            ($(
-                $(#[cfg($($cfg:tt)*)])*
-                $ty:ty,
-            )*) => {
-                [
-                    (
-                        std::any::TypeId::of::<str>(),
-                        (|v| unsafe {
-                            // SAFETY: We verify the value is str before casting
-                            let v = *(v.0 as *const &'_ str);
-
-                            Primitive::from(v)
-                        }) as for<'a> fn(VoidRef<'a>) -> Primitive<'a>
-                    ),
-                    $(
-                        $(#[cfg($($cfg)*)])*
-                        (
-                            std::any::TypeId::of::<$ty>(),
-                            (|v| unsafe {
-                                // SAFETY: We verify the value is $ty before casting
-                                let v = *(v.0 as *const &'_ $ty);
-
-                                Primitive::from(v)
-                            }) as for<'a> fn(VoidRef<'a>) -> Primitive<'a>
-                        ),
-                    )*
-                    $(
-                        $(#[cfg($($cfg)*)])*
-                        (
-                            std::any::TypeId::of::<Option<$ty>>(),
-                            (|v| unsafe {
-                                // SAFETY: We verify the value is Option<$ty> before casting
-                                let v = *(v.0 as *const &'_ Option<$ty>);
-
-                                if let Some(v) = v {
-                                    Primitive::from(v)
-                                } else {
-                                    Primitive::None
-                                }
-                            }) as for<'a> fn(VoidRef<'a>) -> Primitive<'a>
-                        ),
-                    )*
-                ]
-            };
-        }
-
-        #[cfg(not(feature = "std"))]
-        const LEN: usize = 35;
-        #[cfg(feature = "std")]
-        const LEN: usize = 37;
-
-        #[ctor]
-        static TYPE_IDS: [(TypeId, for<'a> fn(VoidRef<'a>) -> Primitive<'a>); LEN] = {
-            // NOTE: The types here *must* match the ones used above when `const_type_id` is available
-            let mut type_ids = type_ids![
+        check_type_ids!(
+            &'v v =>
                 usize,
                 u8,
                 u16,
@@ -269,103 +80,46 @@ pub(super) fn from_any<'v, T: ?Sized + 'static>(value: &'v T) -> Option<Primitiv
                 bool,
                 &'static str,
                 // We deal with `str` separately because it's unsized
-                #[cfg(feature = "std")]
+                // str,
+                #[cfg(feature = "alloc")]
                 String,
-            ];
+        );
 
-            quicksort_by(&mut type_ids, |&(ref a, _), &(ref b, _)| a.cmp(b));
+        None
+    };
 
-            type_ids
-        };
+    (type_ids)(VoidRef(&(value) as *const &'v T as *const &'v Void))
+}
 
-        if let Ok(i) = TYPE_IDS.binary_search_by_key(&value.type_id(), |&(k, _)| k) {
-            Some((TYPE_IDS[i].1)(VoidRef(
-                &(value) as *const &'v T as *const &'v Void,
-            )))
-        } else {
-            None
-        }
-    }
+#[cfg(feature = "owned")]
+pub(in crate::internal) fn from_owned_any<'a, T: ?Sized + 'static>(
+    value: &'a T,
+) -> Option<ValueBag<'static>> {
+    let type_ids = |v: VoidRef<'a>| {
+        check_type_ids!(
+            &'a v =>
+                usize,
+                u8,
+                u16,
+                u32,
+                u64,
+                #[cfg(feature = "inline-i128")]
+                u128,
+                isize,
+                i8,
+                i16,
+                i32,
+                i64,
+                #[cfg(feature = "inline-i128")]
+                i128,
+                f32,
+                f64,
+                char,
+                bool,
+        );
 
-    // NOTE: The casts for unsized values (str) are dubious here. To really do this properly
-    // we need https://github.com/rust-lang/rust/issues/81513
-    // When we're not on `nightly` and aren't on a supported arch, we can't do any
-    // work at compile time for capturing
-    #[cfg(any(all(value_bag_capture_ctor, miri), value_bag_capture_fallback))]
-    {
-        use crate::std::any::TypeId;
+        None
+    };
 
-        enum Void {}
-
-        #[repr(transparent)]
-        struct VoidRef<'a>(*const &'a Void);
-
-        macro_rules! type_ids {
-            ($(
-                $(#[cfg($($cfg:tt)*)])*
-                $ty:ty,
-            )*) => {
-                |v: VoidRef<'_>| {
-                    if TypeId::of::<T>() == TypeId::of::<str>() {
-                        // SAFETY: We verify the value is str before casting
-                        let v = unsafe { *(v.0 as *const &'_ str) };
-
-                        return Some(Primitive::from(v));
-                    }
-
-                    $(
-                        $(#[cfg($($cfg)*)])*
-                        if TypeId::of::<T>() == TypeId::of::<$ty>() {
-                            // SAFETY: We verify the value is $ty before casting
-                            let v = unsafe { *(v.0 as *const &'_ $ty) };
-
-                            return Some(Primitive::from(v));
-                        }
-                    )*
-                    $(
-                        $(#[cfg($($cfg)*)])*
-                        if TypeId::of::<T>() == TypeId::of::<Option<$ty>>() {
-                            // SAFETY: We verify the value is Option<$ty> before casting
-                            let v = unsafe { *(v.0 as *const &'_ Option<$ty>) };
-
-                            if let Some(v) = v {
-                                return Some(Primitive::from(v));
-                            } else {
-                                return Some(Primitive::None);
-                            }
-                        }
-                    )*
-
-                    None
-                }
-            };
-        }
-
-        let type_ids = type_ids![
-            usize,
-            u8,
-            u16,
-            u32,
-            u64,
-            u128,
-            isize,
-            i8,
-            i16,
-            i32,
-            i64,
-            i128,
-            f32,
-            f64,
-            char,
-            bool,
-            &'static str,
-            // We deal with `str` separately because it's unsized
-            #[cfg(feature = "std")]
-            String,
-        ];
-
-        (type_ids)(VoidRef(
-            &(value) as *const &'v T as *const &'v Void,
-        ))
-    }
+    (type_ids)(VoidRef(&(value) as *const &'a T as *const &'a Void))
 }

@@ -11,12 +11,11 @@ use std::{
 use actix_rt::task::{spawn_blocking, JoinHandle};
 use bytes::Bytes;
 use derive_more::Display;
-use futures_core::ready;
-use pin_project_lite::pin_project;
-
 #[cfg(feature = "compress-gzip")]
 use flate2::write::{GzEncoder, ZlibEncoder};
-
+use futures_core::ready;
+use pin_project_lite::pin_project;
+use tracing::trace;
 #[cfg(feature = "compress-zstd")]
 use zstd::stream::write::Encoder as ZstdEncoder;
 
@@ -51,10 +50,21 @@ impl<B: MessageBody> Encoder<B> {
         }
     }
 
+    fn empty() -> Self {
+        Encoder {
+            body: EncoderBody::Full { body: Bytes::new() },
+            encoder: None,
+            fut: None,
+            eof: true,
+        }
+    }
+
     pub fn response(encoding: ContentEncoding, head: &mut ResponseHead, body: B) -> Self {
-        // no need to compress an empty body
-        if matches!(body.size(), BodySize::None) {
-            return Self::none();
+        // no need to compress empty bodies
+        match body.size() {
+            BodySize::None => return Self::none(),
+            BodySize::Sized(0) => return Self::empty(),
+            _ => {}
         }
 
         let should_encode = !(head.headers().contains_key(&CONTENT_ENCODING)
@@ -256,7 +266,7 @@ fn update_head(encoding: ContentEncoding, head: &mut ResponseHead) {
     head.headers_mut()
         .insert(header::CONTENT_ENCODING, encoding.to_header_value());
     head.headers_mut()
-        .insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+        .append(header::VARY, HeaderValue::from_static("accept-encoding"));
 
     head.no_chunking(false);
 }
@@ -356,7 +366,7 @@ impl ContentEncoder {
             ContentEncoder::Brotli(ref mut encoder) => match encoder.write_all(data) {
                 Ok(_) => Ok(()),
                 Err(err) => {
-                    log::trace!("Error decoding br encoding: {}", err);
+                    trace!("Error decoding br encoding: {}", err);
                     Err(err)
                 }
             },
@@ -365,7 +375,7 @@ impl ContentEncoder {
             ContentEncoder::Gzip(ref mut encoder) => match encoder.write_all(data) {
                 Ok(_) => Ok(()),
                 Err(err) => {
-                    log::trace!("Error decoding gzip encoding: {}", err);
+                    trace!("Error decoding gzip encoding: {}", err);
                     Err(err)
                 }
             },
@@ -374,7 +384,7 @@ impl ContentEncoder {
             ContentEncoder::Deflate(ref mut encoder) => match encoder.write_all(data) {
                 Ok(_) => Ok(()),
                 Err(err) => {
-                    log::trace!("Error decoding deflate encoding: {}", err);
+                    trace!("Error decoding deflate encoding: {}", err);
                     Err(err)
                 }
             },
@@ -383,7 +393,7 @@ impl ContentEncoder {
             ContentEncoder::Zstd(ref mut encoder) => match encoder.write_all(data) {
                 Ok(_) => Ok(()),
                 Err(err) => {
-                    log::trace!("Error decoding ztsd encoding: {}", err);
+                    trace!("Error decoding ztsd encoding: {}", err);
                     Err(err)
                 }
             },

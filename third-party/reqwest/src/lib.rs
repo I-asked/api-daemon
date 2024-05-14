@@ -2,7 +2,6 @@
 #![deny(missing_debug_implementations)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(test, deny(warnings))]
-#![doc(html_root_url = "https://docs.rs/reqwest/0.11.9")]
 
 //! # reqwest
 //!
@@ -12,11 +11,11 @@
 //! It handles many of the things that most people just expect an HTTP client
 //! to do for them.
 //!
-//! - Async and [blocking](blocking) Clients
-//! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart](multipart)
+//! - Async and [blocking] Clients
+//! - Plain bodies, [JSON](#json), [urlencoded](#forms), [multipart]
 //! - Customizable [redirect policy](#redirect-policies)
 //! - HTTP [Proxies](#proxies)
-//! - Uses system-native [TLS](#tls)
+//! - Uses [TLS](#tls) by default
 //! - Cookies
 //!
 //! The [`reqwest::Client`][client] is asynchronous. For applications wishing
@@ -27,6 +26,11 @@
 //!
 //! - [The Rust Cookbook](https://rust-lang-nursery.github.io/rust-cookbook/web/clients.html)
 //! - [Reqwest Repository Examples](https://github.com/seanmonstar/reqwest/tree/master/examples)
+//!
+//! ## Commercial Support
+//!
+//! For private advice, support, reviews, access to the maintainer, and the
+//! like, reach out for [commercial support][sponsor].
 //!
 //! ## Making a GET request
 //!
@@ -39,7 +43,7 @@
 //!     .text()
 //!     .await?;
 //!
-//! println!("body = {:?}", body);
+//! println!("body = {body:?}");
 //! # Ok(())
 //! # }
 //! ```
@@ -138,7 +142,7 @@
 //! `HTTP_PROXY` or `http_proxy` provide http proxies for http connections while
 //! `HTTPS_PROXY` or `https_proxy` provide HTTPS proxies for HTTPS connections.
 //!
-//! These can be overwritten by adding a [`Proxy`](Proxy) to `ClientBuilder`
+//! These can be overwritten by adding a [`Proxy`] to `ClientBuilder`
 //! i.e. `let proxy = reqwest::Proxy::http("https://secure.example")?;`
 //! or disabled by calling `ClientBuilder::no_proxy()`.
 //!
@@ -150,16 +154,24 @@
 //!
 //! ## TLS
 //!
-//! By default, a `Client` will make use of system-native transport layer
-//! security to connect to HTTPS destinations. This means schannel on Windows,
-//! Security-Framework on macOS, and OpenSSL on Linux.
+//! A `Client` will use transport layer security (TLS) by default to connect to
+//! HTTPS destinations.
 //!
-//! - Additional X509 certificates can be configured on a `ClientBuilder` with the
-//!   [`Certificate`](Certificate) type.
-//! - Client certificates can be add to a `ClientBuilder` with the
-//!   [`Identity`][Identity] type.
+//! - Additional server certificates can be configured on a `ClientBuilder`
+//!   with the [`Certificate`] type.
+//! - Client certificates can be added to a `ClientBuilder` with the
+//!   [`Identity`] type.
 //! - Various parts of TLS can also be configured or even disabled on the
 //!   `ClientBuilder`.
+//!
+//! See more details in the [`tls`] module.
+//!
+//! ## WASM
+//!
+//! The Client implementation automatically switches to the WASM one when the target_arch is wasm32,
+//! the usage is basically the same as the async api. Some of the features are disabled in wasm
+//! : [`tls`], [`cookie`], [`blocking`].
+//!
 //!
 //! ## Optional Features
 //!
@@ -188,11 +200,31 @@
 //! - **multipart**: Provides functionality for multipart forms.
 //! - **stream**: Adds support for `futures::Stream`.
 //! - **socks**: Provides SOCKS5 proxy support.
-//! - **trust-dns**: Enables a trust-dns async resolver instead of default
+//! - **hickory-dns**: Enables a hickory-dns async resolver instead of default
 //!   threadpool using `getaddrinfo`.
 //!
+//! ## Unstable Features
 //!
-//! [hyper]: http://hyper.rs
+//! Some feature flags require additional opt-in by the application, by setting
+//! a `reqwest_unstable` flag.
+//!
+//! - **http3** *(unstable)*: Enables support for sending HTTP/3 requests.
+//!
+//! These features are unstable, and experimental. Details about them may be
+//! changed in patch releases.
+//!
+//! You can pass such a flag to the compiler via `.cargo/config`, or
+//! environment variables, such as:
+//!
+//! ```notrust
+//! RUSTFLAGS="--cfg reqwest_unstable" cargo build
+//! ```
+//!
+//! ## Sponsors
+//!
+//! Support this project by becoming a [sponsor][].
+//!
+//! [hyper]: https://hyper.rs
 //! [blocking]: ./blocking/index.html
 //! [client]: ./struct.Client.html
 //! [response]: ./struct.Response.html
@@ -202,6 +234,15 @@
 //! [redirect]: crate::redirect
 //! [Proxy]: ./struct.Proxy.html
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
+//! [sponsor]: https://seanmonstar.com/sponsor
+
+#[cfg(all(feature = "http3", not(reqwest_unstable)))]
+compile_error!(
+    "\
+    The `http3` feature is unstable, and requires the \
+    `RUSTFLAGS='--cfg reqwest_unstable'` environment variable to be set.\
+"
+);
 
 macro_rules! if_wasm {
     ($($item:item)*) => {$(
@@ -282,6 +323,9 @@ fn _assert_impls() {
 
     assert_send::<Error>();
     assert_sync::<Error>();
+
+    assert_send::<Body>();
+    assert_sync::<Body>();
 }
 
 if_hyper! {
@@ -289,16 +333,13 @@ if_hyper! {
     #[macro_use]
     extern crate doc_comment;
 
-    #[macro_use]
-    extern crate lazy_static;
-
     #[cfg(test)]
     doctest!("../README.md");
 
     pub use self::async_impl::{
-        Body, Client, ClientBuilder, Request, RequestBuilder, Response,
+        Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded,
     };
-    pub use self::proxy::Proxy;
+    pub use self::proxy::{Proxy,NoProxy};
     #[cfg(feature = "__tls")]
     // Re-exports, to be removed in a future release
     pub use tls::{Certificate, Identity};
@@ -312,8 +353,7 @@ if_hyper! {
     mod connect;
     #[cfg(feature = "cookies")]
     pub mod cookie;
-    #[cfg(feature = "trust-dns")]
-    mod dns;
+    pub mod dns;
     mod proxy;
     pub mod redirect;
     #[cfg(feature = "__tls")]

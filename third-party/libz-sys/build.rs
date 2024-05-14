@@ -1,12 +1,6 @@
-extern crate cc;
-extern crate pkg_config;
-#[cfg(target_env = "msvc")]
-extern crate vcpkg;
-
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LIBZ_SYS_STATIC");
@@ -19,19 +13,18 @@ fn main() {
     let want_ng = cfg!(feature = "zlib-ng") && !cfg!(feature = "stock-zlib");
 
     if want_ng && target != "wasm32-unknown-unknown" {
-        return build_zlib_ng(&target);
+        return build_zlib_ng(&target, true);
     }
 
     // Don't run pkg-config if we're linking statically (we'll build below) and
-    // also don't run pkg-config on macOS/FreeBSD/DragonFly. That'll end up printing
+    // also don't run pkg-config on FreeBSD/DragonFly. That'll end up printing
     // `-L /usr/lib` which wreaks havoc with linking to an OpenSSL in /usr/local/lib
-    // (Homebrew, Ports, etc.)
+    // (Ports, etc.)
     let want_static =
         cfg!(feature = "static") || env::var("LIBZ_SYS_STATIC").unwrap_or(String::new()) == "1";
     if !want_static &&
        !target.contains("msvc") && // pkg-config just never works here
-       !(host_and_target_contain("apple") ||
-         host_and_target_contain("freebsd") ||
+       !(host_and_target_contain("freebsd") ||
          host_and_target_contain("dragonfly"))
     {
         // Don't print system lib dirs to cargo since this interferes with other
@@ -41,12 +34,24 @@ fn main() {
             .cargo_metadata(true)
             .print_system_libs(false)
             .probe("zlib");
-        if zlib.is_ok() {
-            return;
+        match zlib {
+            Ok(zlib) => {
+                if !zlib.include_paths.is_empty() {
+                    let paths = zlib
+                        .include_paths
+                        .iter()
+                        .map(|s| s.display().to_string())
+                        .collect::<Vec<_>>();
+                    println!("cargo:include={}", paths.join(","));
+                }
+            }
+            Err(e) => {
+                println!("cargo-warning={}", e.to_string())
+            }
         }
     }
 
-    if target.contains("msvc") {
+    if target.contains("windows") {
         if try_vcpkg() {
             return;
         }
@@ -65,12 +70,16 @@ fn main() {
     // Situations where we build unconditionally.
     //
     // MSVC basically never has it preinstalled, MinGW picks up a bunch of weird
-    // paths we don't like, `want_static` may force us, cross compiling almost
-    // never has a prebuilt version, and musl is almost always static.
+    // paths we don't like, `want_static` may force us, and cross compiling almost
+    // never has a prebuilt version.
+    //
+    // Apple platforms have libz.1.dylib, and it's usually available even when
+    // cross compiling (via fat binary or in the target's Xcode SDK)
+    let cross_compiling = target != host;
     if target.contains("msvc")
         || target.contains("pc-windows-gnu")
         || want_static
-        || target != host
+        || (cross_compiling && !target.contains("-apple-"))
     {
         return build_zlib(&mut cfg, &target);
     }
@@ -136,11 +145,22 @@ fn build_zlib(cfg: &mut cc::Build, target: &str) {
     fs::copy("src/zlib/zconf.h", dst.join("include/zconf.h")).unwrap();
 
     fs::create_dir_all(lib.join("pkgconfig")).unwrap();
+    let zlib_h = fs::read_to_string(dst.join("include/zlib.h")).unwrap();
+    let version = zlib_h
+        .lines()
+        .find(|l| l.contains("ZLIB_VERSION"))
+        .unwrap()
+        .split("\"")
+        .nth(1)
+        .unwrap();
     fs::write(
         lib.join("pkgconfig/zlib.pc"),
         fs::read_to_string("src/zlib/zlib.pc.in")
             .unwrap()
-            .replace("@prefix@", dst.to_str().unwrap()),
+            .replace("@prefix@", dst.to_str().unwrap())
+            .replace("@includedir@", "${prefix}/include")
+            .replace("@libdir@", "${prefix}/lib")
+            .replace("@VERSION@", version),
     )
     .unwrap();
 
@@ -150,47 +170,18 @@ fn build_zlib(cfg: &mut cc::Build, target: &str) {
 }
 
 #[cfg(not(feature = "zlib-ng"))]
-fn build_zlib_ng(_target: &str) {}
+fn build_zlib_ng(_target: &str, _compat: bool) {}
 
 #[cfg(feature = "zlib-ng")]
-fn build_zlib_ng(target: &str) {
-    let install_dir = cmake::Config::new("src/zlib-ng")
-        .define("BUILD_SHARED_LIBS", "OFF")
-        .define("ZLIB_COMPAT", "ON")
-        .define("WITH_GZFILEOP", "ON")
-        .build();
-    let includedir = install_dir.join("include");
-    let libdir = install_dir.join("lib");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        libdir.to_str().unwrap()
-    );
-    let libname = if target.contains("windows") {
-        if target.contains("msvc") && env::var("OPT_LEVEL").unwrap() == "0" {
-            "zlibd"
-        } else {
-            "zlib"
-        }
-    } else {
-        "z"
-    };
-    println!("cargo:rustc-link-lib=static={}", libname);
-    println!("cargo:root={}", install_dir.to_str().unwrap());
-    println!("cargo:include={}", includedir.to_str().unwrap());
-}
+mod build_zng;
+#[cfg(feature = "zlib-ng")]
+use build_zng::build_zlib_ng;
 
-#[cfg(not(target_env = "msvc"))]
-fn try_vcpkg() -> bool {
-    false
-}
-
-#[cfg(target_env = "msvc")]
 fn try_vcpkg() -> bool {
     // see if there is a vcpkg tree with zlib installed
     match vcpkg::Config::new()
         .emit_includes(true)
-        .lib_names("zlib", "zlib1")
-        .probe("zlib")
+        .find_package("zlib")
     {
         Ok(_) => true,
         Err(e) => {
@@ -201,9 +192,12 @@ fn try_vcpkg() -> bool {
 }
 
 fn zlib_installed(cfg: &mut cc::Build) -> bool {
-    let compiler = cfg.get_compiler();
-    let mut cmd = Command::new(compiler.path());
-    cmd.arg("src/smoke.c").arg("-o").arg("/dev/null").arg("-lz");
+    let mut cmd = cfg.get_compiler().to_command();
+    cmd.arg("src/smoke.c")
+        .arg("-g0")
+        .arg("-o")
+        .arg("/dev/null")
+        .arg("-lz");
 
     println!("running {:?}", cmd);
     if let Ok(status) = cmd.status() {

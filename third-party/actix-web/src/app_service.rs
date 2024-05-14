@@ -21,7 +21,7 @@ use crate::{
     Error, HttpResponse,
 };
 
-/// Service factory to convert `Request` to a `ServiceRequest<S>`.
+/// Service factory to convert [`Request`] to a [`ServiceRequest<S>`].
 ///
 /// It also executes data factories.
 pub struct AppInit<T, B>
@@ -112,11 +112,7 @@ where
         let endpoint_fut = self.endpoint.new_service(());
 
         // take extensions or create new one as app data container.
-        let mut app_data = self
-            .extensions
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(Extensions::new);
+        let mut app_data = self.extensions.borrow_mut().take().unwrap_or_default();
 
         Box::pin(async move {
             // async data factories
@@ -155,7 +151,7 @@ where
     app_state: Rc<AppInitServiceState>,
 }
 
-/// A collection of [`AppInitService`] state that shared across `HttpRequest`s.
+/// A collection of state for [`AppInitService`] that is shared across [`HttpRequest`]s.
 pub(crate) struct AppInitServiceState {
     rmap: Rc<ResourceMap>,
     config: AppConfig,
@@ -163,6 +159,7 @@ pub(crate) struct AppInitServiceState {
 }
 
 impl AppInitServiceState {
+    /// Constructs state collection from resource map and app config.
     pub(crate) fn new(rmap: Rc<ResourceMap>, config: AppConfig) -> Rc<Self> {
         Rc::new(AppInitServiceState {
             rmap,
@@ -171,16 +168,19 @@ impl AppInitServiceState {
         })
     }
 
+    /// Returns a reference to the application's resource map.
     #[inline]
     pub(crate) fn rmap(&self) -> &ResourceMap {
-        &*self.rmap
+        &self.rmap
     }
 
+    /// Returns a reference to the application's configuration.
     #[inline]
     pub(crate) fn config(&self) -> &AppConfig {
         &self.config
     }
 
+    /// Returns a reference to the application's request pool.
     #[inline]
     pub(crate) fn pool(&self) -> &HttpRequestPool {
         &self.pool
@@ -257,7 +257,7 @@ impl ServiceFactory<ServiceRequest> for AppRoutingFactory {
     type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        // construct all services factory future with it's resource def and guards.
+        // construct all services factory future with its resource def and guards.
         let factory_fut = join_all(self.services.iter().map(|(path, factory, guards)| {
             let path = path.clone();
             let guards = guards.borrow_mut().take().unwrap_or_default();
@@ -344,13 +344,17 @@ impl ServiceFactory<ServiceRequest> for AppEntry {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     use actix_service::Service;
 
-    use crate::test::{init_service, TestRequest};
-    use crate::{web, App, HttpResponse};
+    use crate::{
+        test::{init_service, TestRequest},
+        web, App, HttpResponse,
+    };
 
     struct DropData(Arc<AtomicBool>);
 

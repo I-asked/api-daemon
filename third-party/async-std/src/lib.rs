@@ -56,7 +56,7 @@
 //! * [The async-std website](https://async.rs/)
 //! * [The async-std book](https://book.async.rs)
 //! * [GitHub repository](https://github.com/async-rs/async-std)
-//! * [List of code examples](https://github.com/async-rs/async-std/tree/master/examples)
+//! * [List of code examples](https://github.com/async-rs/async-std/tree/HEAD/examples)
 //! * [Discord chat](https://discord.gg/JvZeVNe)
 //!
 //! # What is in the `async-std` documentation?
@@ -267,9 +267,10 @@
 //!
 //! * `ASYNC_STD_THREAD_COUNT`: The number of threads that the
 //! async-std runtime will start. By default, this is one per logical
-//! cpu as reported by the [num_cpus](num_cpus) crate, which may be
-//! different than the number of physical cpus. Async-std _will panic_
-//! if this is set to any value other than a positive integer.
+//! cpu as determined by [async-global-executor](async_global_executor),
+//! which may be different than the number of physical cpus. Async-std
+//! _will panic_ if this is set to any value other than a positive
+//! integer.
 //! * `ASYNC_STD_THREAD_NAME`: The name that async-std's runtime
 //! threads report to the operating system. The default value is
 //! `"async-std/runtime"`.
@@ -282,7 +283,6 @@
 #![doc(test(attr(deny(rust_2018_idioms, warnings))))]
 #![doc(test(attr(allow(unused_extern_crates, unused_variables))))]
 #![doc(html_logo_url = "https://async.rs/images/logo--hero.svg")]
-#![recursion_limit = "2048"]
 
 extern crate alloc;
 

@@ -134,6 +134,7 @@ where
 /// ```
 #[derive(Clone, Default)]
 pub struct PathConfig {
+    #[allow(clippy::type_complexity)]
     err_handler: Option<Arc<dyn Fn(PathError, &HttpRequest) -> Error + Send + Sync>>,
 }
 
@@ -155,8 +156,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::test::TestRequest;
-    use crate::{error, http, HttpResponse};
+    use crate::{error, http, test::TestRequest, HttpResponse};
 
     #[derive(Deserialize, Debug, Display)]
     #[display(fmt = "MyStruct({}, {})", key, value)]
@@ -183,6 +183,7 @@ mod tests {
         assert!(Path::<MyStruct>::from_request(&req, &mut pl).await.is_err());
     }
 
+    #[allow(clippy::let_unit_value)]
     #[actix_rt::test]
     async fn test_tuple_extract() {
         let resource = ResourceDef::new("/{key}/{value}/");
@@ -274,8 +275,7 @@ mod tests {
     async fn test_custom_err_handler() {
         let (req, mut pl) = TestRequest::with_uri("/name/user1/")
             .app_data(PathConfig::default().error_handler(|err, _| {
-                error::InternalError::from_response(err, HttpResponse::Conflict().finish())
-                    .into()
+                error::InternalError::from_response(err, HttpResponse::Conflict().finish()).into()
             }))
             .to_http_parts();
 

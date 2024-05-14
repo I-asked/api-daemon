@@ -83,8 +83,21 @@ pub const MSG_DONTROUTE: ::c_int = 0x4;
 pub const MSG_WAITALL: ::c_int = 0x02;
 pub const MSG_MORE: ::c_int = 0x10;
 pub const MSG_NOSIGNAL: ::c_int = 0x20;
+pub const MSG_TRUNC: ::c_int = 0x04;
+pub const MSG_CTRUNC: ::c_int = 0x08;
+pub const MSG_EOR: ::c_int = 0x08;
 
 pub const PTHREAD_STACK_MIN: ::size_t = 768;
+
+pub const SIGABRT: ::size_t = 1;
+pub const SIGFPE: ::size_t = 1;
+pub const SIGILL: ::size_t = 1;
+pub const SIGINT: ::size_t = 1;
+pub const SIGSEGV: ::size_t = 1;
+pub const SIGTERM: ::size_t = 1;
+pub const SIGHUP: ::size_t = 1;
+pub const SIGQUIT: ::size_t = 1;
+pub const NSIG: ::size_t = 2;
 
 extern "C" {
     pub fn pthread_create(
@@ -100,4 +113,8 @@ extern "C" {
     pub fn sendmsg(s: ::c_int, msg: *const ::msghdr, flags: ::c_int) -> ::ssize_t;
     #[link_name = "lwip_recvmsg"]
     pub fn recvmsg(s: ::c_int, msg: *mut ::msghdr, flags: ::c_int) -> ::ssize_t;
+
+    pub fn eventfd(initval: ::c_uint, flags: ::c_int) -> ::c_int;
 }
+
+pub use crate::unix::newlib::generic::{dirent, sigset_t, stat};

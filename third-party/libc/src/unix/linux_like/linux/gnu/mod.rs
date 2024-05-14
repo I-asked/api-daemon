@@ -3,6 +3,7 @@ pub type __priority_which_t = ::c_uint;
 pub type __rlimit_resource_t = ::c_uint;
 pub type Lmid_t = ::c_long;
 pub type regoff_t = ::c_int;
+pub type __kernel_rwf_t = ::c_int;
 
 cfg_if! {
     if #[cfg(doc)] {
@@ -37,7 +38,8 @@ s! {
         pub stx_dev_major: u32,
         pub stx_dev_minor: u32,
         pub stx_mnt_id: u64,
-        __statx_pad2: u64,
+        pub stx_dio_mem_align: u32,
+        pub stx_dio_offset_align: u32,
         __statx_pad3: [u64; 12],
     }
 
@@ -115,13 +117,17 @@ s! {
             target_arch = "sparc",
             target_arch = "sparc64",
             target_arch = "mips",
-            target_arch = "mips64")))]
+            target_arch = "mips32r6",
+            target_arch = "mips64",
+            target_arch = "mips64r6")))]
         pub c_ispeed: ::speed_t,
         #[cfg(not(any(
             target_arch = "sparc",
             target_arch = "sparc64",
             target_arch = "mips",
-            target_arch = "mips64")))]
+            target_arch = "mips32r6",
+            target_arch = "mips64",
+            target_arch = "mips64r6")))]
         pub c_ospeed: ::speed_t,
     }
 
@@ -350,6 +356,104 @@ s! {
         #[cfg(libc_union)]
         pub u: __c_anonymous_ptrace_syscall_info_data,
     }
+
+    // linux/if_xdp.h
+
+    pub struct sockaddr_xdp {
+        pub sxdp_family: ::__u16,
+        pub sxdp_flags: ::__u16,
+        pub sxdp_ifindex: ::__u32,
+        pub sxdp_queue_id: ::__u32,
+        pub sxdp_shared_umem_fd: ::__u32,
+    }
+
+    pub struct xdp_ring_offset {
+        pub producer: ::__u64,
+        pub consumer: ::__u64,
+        pub desc: ::__u64,
+        pub flags: ::__u64,
+    }
+
+    pub struct xdp_mmap_offsets {
+        pub rx: xdp_ring_offset,
+        pub tx: xdp_ring_offset,
+        pub fr: xdp_ring_offset,
+        pub cr: xdp_ring_offset,
+    }
+
+    pub struct xdp_ring_offset_v1 {
+        pub producer: ::__u64,
+        pub consumer: ::__u64,
+        pub desc: ::__u64,
+    }
+
+    pub struct xdp_mmap_offsets_v1 {
+        pub rx: xdp_ring_offset_v1,
+        pub tx: xdp_ring_offset_v1,
+        pub fr: xdp_ring_offset_v1,
+        pub cr: xdp_ring_offset_v1,
+    }
+
+    pub struct xdp_umem_reg {
+        pub addr: ::__u64,
+        pub len: ::__u64,
+        pub chunk_size: ::__u32,
+        pub headroom: ::__u32,
+        pub flags: ::__u32,
+    }
+
+    pub struct xdp_umem_reg_v1 {
+        pub addr: ::__u64,
+        pub len: ::__u64,
+        pub chunk_size: ::__u32,
+        pub headroom: ::__u32,
+    }
+
+    pub struct xdp_statistics {
+        pub rx_dropped: ::__u64,
+        pub rx_invalid_descs: ::__u64,
+        pub tx_invalid_descs: ::__u64,
+        pub rx_ring_full: ::__u64,
+        pub rx_fill_ring_empty_descs: ::__u64,
+        pub tx_ring_empty_descs: ::__u64,
+    }
+
+    pub struct xdp_statistics_v1 {
+        pub rx_dropped: ::__u64,
+        pub rx_invalid_descs: ::__u64,
+        pub tx_invalid_descs: ::__u64,
+    }
+
+    pub struct xdp_options {
+        pub flags: ::__u32,
+    }
+
+    pub struct xdp_desc {
+        pub addr: ::__u64,
+        pub len: ::__u32,
+        pub options: ::__u32,
+    }
+
+    pub struct iocb {
+        pub aio_data: ::__u64,
+        #[cfg(target_endian = "little")]
+        pub aio_key: ::__u32,
+        #[cfg(target_endian = "little")]
+        pub aio_rw_flags: ::__kernel_rwf_t,
+        #[cfg(target_endian = "big")]
+        pub aio_rw_flags: ::__kernel_rwf_t,
+        #[cfg(target_endian = "big")]
+        pub aio_key: ::__u32,
+        pub aio_lio_opcode: ::__u16,
+        pub aio_reqprio: ::__s16,
+        pub aio_fildes: ::__u32,
+        pub aio_buf: ::__u64,
+        pub aio_nbytes: ::__u64,
+        pub aio_offset: ::__s64,
+        aio_reserved2: ::__u64,
+        pub aio_flags: ::__u32,
+        pub aio_resfd: ::__u32,
+    }
 }
 
 impl siginfo_t {
@@ -465,22 +569,26 @@ s_no_extra_traits! {
 
         #[cfg(any(target_arch = "aarch64",
                   target_arch = "s390x",
+                  target_arch = "loongarch64",
                   all(target_pointer_width = "32",
                       not(target_arch = "x86_64"))))]
         pub ut_session: ::c_long,
         #[cfg(any(target_arch = "aarch64",
                   target_arch = "s390x",
+                  target_arch = "loongarch64",
                   all(target_pointer_width = "32",
                       not(target_arch = "x86_64"))))]
         pub ut_tv: ::timeval,
 
         #[cfg(not(any(target_arch = "aarch64",
                       target_arch = "s390x",
+                      target_arch = "loongarch64",
                       all(target_pointer_width = "32",
                           not(target_arch = "x86_64")))))]
         pub ut_session: i32,
         #[cfg(not(any(target_arch = "aarch64",
                       target_arch = "s390x",
+                      target_arch = "loongarch64",
                       all(target_pointer_width = "32",
                           not(target_arch = "x86_64")))))]
         pub ut_tv: __timeval,
@@ -629,20 +737,6 @@ pub const MAP_HUGE_1GB: ::c_int = HUGETLB_FLAG_ENCODE_1GB;
 pub const MAP_HUGE_2GB: ::c_int = HUGETLB_FLAG_ENCODE_2GB;
 pub const MAP_HUGE_16GB: ::c_int = HUGETLB_FLAG_ENCODE_16GB;
 
-pub const RLIMIT_CPU: ::__rlimit_resource_t = 0;
-pub const RLIMIT_FSIZE: ::__rlimit_resource_t = 1;
-pub const RLIMIT_DATA: ::__rlimit_resource_t = 2;
-pub const RLIMIT_STACK: ::__rlimit_resource_t = 3;
-pub const RLIMIT_CORE: ::__rlimit_resource_t = 4;
-pub const RLIMIT_LOCKS: ::__rlimit_resource_t = 10;
-pub const RLIMIT_SIGPENDING: ::__rlimit_resource_t = 11;
-pub const RLIMIT_MSGQUEUE: ::__rlimit_resource_t = 12;
-pub const RLIMIT_NICE: ::__rlimit_resource_t = 13;
-pub const RLIMIT_RTPRIO: ::__rlimit_resource_t = 14;
-pub const RLIMIT_RTTIME: ::__rlimit_resource_t = 15;
-pub const RLIMIT_NLIMITS: ::__rlimit_resource_t = 16;
-pub const RLIM_NLIMITS: ::__rlimit_resource_t = RLIMIT_NLIMITS;
-
 pub const PRIO_PROCESS: ::__priority_which_t = 0;
 pub const PRIO_PGRP: ::__priority_which_t = 1;
 pub const PRIO_USER: ::__priority_which_t = 2;
@@ -723,11 +817,6 @@ pub const SOCK_SEQPACKET: ::c_int = 5;
 pub const SOCK_DCCP: ::c_int = 6;
 pub const SOCK_PACKET: ::c_int = 10;
 
-pub const FAN_MARK_INODE: ::c_uint = 0x0000_0000;
-pub const FAN_MARK_MOUNT: ::c_uint = 0x0000_0010;
-// NOTE: FAN_MARK_FILESYSTEM requires Linux Kernel >= 4.20.0
-pub const FAN_MARK_FILESYSTEM: ::c_uint = 0x0000_0100;
-
 pub const AF_IB: ::c_int = 27;
 pub const AF_MPLS: ::c_int = 28;
 pub const AF_NFC: ::c_int = 39;
@@ -738,27 +827,6 @@ pub const PF_MPLS: ::c_int = AF_MPLS;
 pub const PF_NFC: ::c_int = AF_NFC;
 pub const PF_VSOCK: ::c_int = AF_VSOCK;
 pub const PF_XDP: ::c_int = AF_XDP;
-
-/* DCCP socket options */
-pub const DCCP_SOCKOPT_PACKET_SIZE: ::c_int = 1;
-pub const DCCP_SOCKOPT_SERVICE: ::c_int = 2;
-pub const DCCP_SOCKOPT_CHANGE_L: ::c_int = 3;
-pub const DCCP_SOCKOPT_CHANGE_R: ::c_int = 4;
-pub const DCCP_SOCKOPT_GET_CUR_MPS: ::c_int = 5;
-pub const DCCP_SOCKOPT_SERVER_TIMEWAIT: ::c_int = 6;
-pub const DCCP_SOCKOPT_SEND_CSCOV: ::c_int = 10;
-pub const DCCP_SOCKOPT_RECV_CSCOV: ::c_int = 11;
-pub const DCCP_SOCKOPT_AVAILABLE_CCIDS: ::c_int = 12;
-pub const DCCP_SOCKOPT_CCID: ::c_int = 13;
-pub const DCCP_SOCKOPT_TX_CCID: ::c_int = 14;
-pub const DCCP_SOCKOPT_RX_CCID: ::c_int = 15;
-pub const DCCP_SOCKOPT_QPOLICY_ID: ::c_int = 16;
-pub const DCCP_SOCKOPT_QPOLICY_TXQLEN: ::c_int = 17;
-pub const DCCP_SOCKOPT_CCID_RX_INFO: ::c_int = 128;
-pub const DCCP_SOCKOPT_CCID_TX_INFO: ::c_int = 192;
-
-/// maximum number of services provided on the same listening port
-pub const DCCP_SERVICE_LIST_MAX_LEN: ::c_int = 32;
 
 pub const SIGEV_THREAD_ID: ::c_int = 4;
 
@@ -883,7 +951,13 @@ pub const PTRACE_SEIZE: ::c_uint = 0x4206;
 pub const PTRACE_INTERRUPT: ::c_uint = 0x4207;
 pub const PTRACE_LISTEN: ::c_uint = 0x4208;
 pub const PTRACE_PEEKSIGINFO: ::c_uint = 0x4209;
+pub const PTRACE_GETSIGMASK: ::c_uint = 0x420a;
+pub const PTRACE_SETSIGMASK: ::c_uint = 0x420b;
 pub const PTRACE_GET_SYSCALL_INFO: ::c_uint = 0x420e;
+pub const PTRACE_SYSCALL_INFO_NONE: ::__u8 = 0;
+pub const PTRACE_SYSCALL_INFO_ENTRY: ::__u8 = 1;
+pub const PTRACE_SYSCALL_INFO_EXIT: ::__u8 = 2;
+pub const PTRACE_SYSCALL_INFO_SECCOMP: ::__u8 = 3;
 
 // linux/fs.h
 
@@ -945,6 +1019,38 @@ pub const GENL_UNS_ADMIN_PERM: ::c_int = 0x10;
 pub const GENL_ID_VFS_DQUOT: ::c_int = ::NLMSG_MIN_TYPE + 1;
 pub const GENL_ID_PMCRAID: ::c_int = ::NLMSG_MIN_TYPE + 2;
 
+// linux/if_xdp.h
+pub const XDP_SHARED_UMEM: ::__u16 = 1 << 0;
+pub const XDP_COPY: ::__u16 = 1 << 1;
+pub const XDP_ZEROCOPY: ::__u16 = 1 << 2;
+pub const XDP_USE_NEED_WAKEUP: ::__u16 = 1 << 3;
+pub const XDP_USE_SG: ::__u16 = 1 << 4;
+
+pub const XDP_UMEM_UNALIGNED_CHUNK_FLAG: ::__u32 = 1 << 0;
+
+pub const XDP_RING_NEED_WAKEUP: ::__u32 = 1 << 0;
+
+pub const XDP_MMAP_OFFSETS: ::c_int = 1;
+pub const XDP_RX_RING: ::c_int = 2;
+pub const XDP_TX_RING: ::c_int = 3;
+pub const XDP_UMEM_REG: ::c_int = 4;
+pub const XDP_UMEM_FILL_RING: ::c_int = 5;
+pub const XDP_UMEM_COMPLETION_RING: ::c_int = 6;
+pub const XDP_STATISTICS: ::c_int = 7;
+pub const XDP_OPTIONS: ::c_int = 8;
+
+pub const XDP_OPTIONS_ZEROCOPY: ::__u32 = 1 << 0;
+
+pub const XDP_PGOFF_RX_RING: ::off_t = 0;
+pub const XDP_PGOFF_TX_RING: ::off_t = 0x80000000;
+pub const XDP_UMEM_PGOFF_FILL_RING: ::c_ulonglong = 0x100000000;
+pub const XDP_UMEM_PGOFF_COMPLETION_RING: ::c_ulonglong = 0x180000000;
+
+pub const XSK_UNALIGNED_BUF_OFFSET_SHIFT: ::c_int = 48;
+pub const XSK_UNALIGNED_BUF_ADDR_MASK: ::c_ulonglong = (1 << XSK_UNALIGNED_BUF_OFFSET_SHIFT) - 1;
+
+pub const XDP_PKT_CONTD: ::__u32 = 1 << 0;
+
 // elf.h
 pub const NT_PRSTATUS: ::c_int = 1;
 pub const NT_PRFPREG: ::c_int = 2;
@@ -964,6 +1070,13 @@ pub const NT_LWPSTATUS: ::c_int = 16;
 pub const NT_LWPSINFO: ::c_int = 17;
 pub const NT_PRFPXREG: ::c_int = 20;
 
+pub const ELFOSABI_ARM_AEABI: u8 = 64;
+
+// linux/sched.h
+pub const CLONE_NEWTIME: ::c_int = 0x80;
+pub const CLONE_CLEAR_SIGHAND: ::c_int = 0x100000000;
+pub const CLONE_INTO_CGROUP: ::c_int = 0x200000000;
+
 // linux/keyctl.h
 pub const KEYCTL_DH_COMPUTE: u32 = 23;
 pub const KEYCTL_PKEY_QUERY: u32 = 24;
@@ -978,7 +1091,10 @@ pub const KEYCTL_SUPPORTS_DECRYPT: u32 = 0x02;
 pub const KEYCTL_SUPPORTS_SIGN: u32 = 0x04;
 pub const KEYCTL_SUPPORTS_VERIFY: u32 = 0x08;
 cfg_if! {
-    if #[cfg(not(any(target_arch="mips", target_arch="mips64")))] {
+    if #[cfg(not(any(target_arch = "mips",
+                     target_arch = "mips32r6",
+                     target_arch = "mips64",
+                     target_arch = "mips64r6")))] {
         pub const KEYCTL_MOVE: u32 = 30;
         pub const KEYCTL_CAPABILITIES: u32 = 31;
 
@@ -1026,6 +1142,7 @@ pub const STATX_BLOCKS: ::c_uint = 0x0400;
 pub const STATX_BASIC_STATS: ::c_uint = 0x07ff;
 pub const STATX_BTIME: ::c_uint = 0x0800;
 pub const STATX_MNT_ID: ::c_uint = 0x1000;
+pub const STATX_DIOALIGN: ::c_uint = 0x2000;
 pub const STATX_ALL: ::c_uint = 0x0fff;
 pub const STATX__RESERVED: ::c_int = 0x80000000;
 pub const STATX_ATTR_COMPRESSED: ::c_int = 0x0004;
@@ -1034,8 +1151,23 @@ pub const STATX_ATTR_APPEND: ::c_int = 0x0020;
 pub const STATX_ATTR_NODUMP: ::c_int = 0x0040;
 pub const STATX_ATTR_ENCRYPTED: ::c_int = 0x0800;
 pub const STATX_ATTR_AUTOMOUNT: ::c_int = 0x1000;
+pub const STATX_ATTR_MOUNT_ROOT: ::c_int = 0x2000;
+pub const STATX_ATTR_VERITY: ::c_int = 0x00100000;
+pub const STATX_ATTR_DAX: ::c_int = 0x00200000;
 
-//sys/timex.h
+pub const SOMAXCONN: ::c_int = 4096;
+
+// linux/mount.h
+pub const MOVE_MOUNT_F_SYMLINKS: ::c_uint = 0x00000001;
+pub const MOVE_MOUNT_F_AUTOMOUNTS: ::c_uint = 0x00000002;
+pub const MOVE_MOUNT_F_EMPTY_PATH: ::c_uint = 0x00000004;
+pub const MOVE_MOUNT_T_SYMLINKS: ::c_uint = 0x00000010;
+pub const MOVE_MOUNT_T_AUTOMOUNTS: ::c_uint = 0x00000020;
+pub const MOVE_MOUNT_T_EMPTY_PATH: ::c_uint = 0x00000040;
+pub const MOVE_MOUNT_SET_GROUP: ::c_uint = 0x00000100;
+pub const MOVE_MOUNT_BENEATH: ::c_uint = 0x00000200;
+
+// sys/timex.h
 pub const ADJ_OFFSET: ::c_uint = 0x0001;
 pub const ADJ_FREQUENCY: ::c_uint = 0x0002;
 pub const ADJ_MAXERROR: ::c_uint = 0x0004;
@@ -1093,6 +1225,18 @@ pub const TIME_WAIT: ::c_int = 4;
 pub const TIME_ERROR: ::c_int = 5;
 pub const TIME_BAD: ::c_int = TIME_ERROR;
 pub const MAXTC: ::c_long = 6;
+
+// Portable GLOB_* flags are defined at the `linux_like` level.
+// The following are GNU extensions.
+pub const GLOB_PERIOD: ::c_int = 1 << 7;
+pub const GLOB_ALTDIRFUNC: ::c_int = 1 << 9;
+pub const GLOB_BRACE: ::c_int = 1 << 10;
+pub const GLOB_NOMAGIC: ::c_int = 1 << 11;
+pub const GLOB_TILDE: ::c_int = 1 << 12;
+pub const GLOB_ONLYDIR: ::c_int = 1 << 13;
+pub const GLOB_TILDE_CHECK: ::c_int = 1 << 14;
+
+pub const MADV_COLLAPSE: ::c_int = 25;
 
 cfg_if! {
     if #[cfg(any(
@@ -1199,6 +1343,7 @@ extern "C" {
         mask: ::c_uint,
         statxbuf: *mut statx,
     ) -> ::c_int;
+    pub fn getentropy(buf: *mut ::c_void, buflen: ::size_t) -> ::c_int;
     pub fn getrandom(buf: *mut ::c_void, buflen: ::size_t, flags: ::c_uint) -> ::ssize_t;
     pub fn getauxval(type_: ::c_ulong) -> ::c_ulong;
 
@@ -1208,14 +1353,6 @@ extern "C" {
     pub fn ntp_gettime(buf: *mut ntptimeval) -> ::c_int;
     pub fn clock_adjtime(clk_id: ::clockid_t, buf: *mut ::timex) -> ::c_int;
 
-    pub fn copy_file_range(
-        fd_in: ::c_int,
-        off_in: *mut ::off64_t,
-        fd_out: ::c_int,
-        off_out: *mut ::off64_t,
-        len: ::size_t,
-        flags: ::c_uint,
-    ) -> ::ssize_t;
     pub fn fanotify_mark(
         fd: ::c_int,
         flags: ::c_uint,
@@ -1265,9 +1402,6 @@ extern "C" {
     pub fn reallocarray(ptr: *mut ::c_void, nmemb: ::size_t, size: ::size_t) -> *mut ::c_void;
 
     pub fn ctermid(s: *mut ::c_char) -> *mut ::c_char;
-}
-
-extern "C" {
     pub fn ioctl(fd: ::c_int, request: ::c_ulong, ...) -> ::c_int;
     pub fn backtrace(buf: *mut *mut ::c_void, sz: ::c_int) -> ::c_int;
     pub fn glob64(
@@ -1298,6 +1432,7 @@ extern "C" {
         attr: *mut ::pthread_rwlockattr_t,
         val: ::c_int,
     ) -> ::c_int;
+    pub fn pthread_sigqueue(thread: ::pthread_t, sig: ::c_int, value: ::sigval) -> ::c_int;
     pub fn mallinfo() -> ::mallinfo;
     pub fn mallinfo2() -> ::mallinfo2;
     pub fn malloc_info(options: ::c_int, stream: *mut ::FILE) -> ::c_int;
@@ -1314,16 +1449,42 @@ extern "C" {
         buflen: ::size_t,
         result: *mut *mut ::group,
     ) -> ::c_int;
-    pub fn pthread_getname_np(thread: ::pthread_t, name: *mut ::c_char, len: ::size_t) -> ::c_int;
-    pub fn pthread_setname_np(thread: ::pthread_t, name: *const ::c_char) -> ::c_int;
+    pub fn fgetpwent_r(
+        stream: *mut ::FILE,
+        pwd: *mut ::passwd,
+        buf: *mut ::c_char,
+        buflen: ::size_t,
+        result: *mut *mut ::passwd,
+    ) -> ::c_int;
+    pub fn fgetgrent_r(
+        stream: *mut ::FILE,
+        grp: *mut ::group,
+        buf: *mut ::c_char,
+        buflen: ::size_t,
+        result: *mut *mut ::group,
+    ) -> ::c_int;
+
+    pub fn putpwent(p: *const ::passwd, stream: *mut ::FILE) -> ::c_int;
+    pub fn putgrent(grp: *const ::group, stream: *mut ::FILE) -> ::c_int;
 
     pub fn sethostid(hostid: ::c_long) -> ::c_int;
 
     pub fn memfd_create(name: *const ::c_char, flags: ::c_uint) -> ::c_int;
     pub fn mlock2(addr: *const ::c_void, len: ::size_t, flags: ::c_uint) -> ::c_int;
-}
 
-extern "C" {
+    pub fn euidaccess(pathname: *const ::c_char, mode: ::c_int) -> ::c_int;
+    pub fn eaccess(pathname: *const ::c_char, mode: ::c_int) -> ::c_int;
+
+    pub fn asctime_r(tm: *const ::tm, buf: *mut ::c_char) -> *mut ::c_char;
+    pub fn ctime_r(timep: *const time_t, buf: *mut ::c_char) -> *mut ::c_char;
+
+    pub fn dirname(path: *mut ::c_char) -> *mut ::c_char;
+    /// POSIX version of `basename(3)`, defined in `libgen.h`.
+    #[link_name = "__xpg_basename"]
+    pub fn posix_basename(path: *mut ::c_char) -> *mut ::c_char;
+    /// GNU version of `basename(3)`, defined in `string.h`.
+    #[link_name = "basename"]
+    pub fn gnu_basename(path: *const ::c_char) -> *mut ::c_char;
     pub fn dlmopen(lmid: Lmid_t, filename: *const ::c_char, flag: ::c_int) -> *mut ::c_void;
     pub fn dlinfo(handle: *mut ::c_void, request: ::c_int, info: *mut ::c_void) -> ::c_int;
     pub fn dladdr1(
@@ -1333,13 +1494,58 @@ extern "C" {
         flags: ::c_int,
     ) -> ::c_int;
     pub fn malloc_trim(__pad: ::size_t) -> ::c_int;
+    pub fn gnu_get_libc_release() -> *const ::c_char;
+    pub fn gnu_get_libc_version() -> *const ::c_char;
+
+    // posix/spawn.h
+    // Added in `glibc` 2.29
+    pub fn posix_spawn_file_actions_addchdir_np(
+        actions: *mut ::posix_spawn_file_actions_t,
+        path: *const ::c_char,
+    ) -> ::c_int;
+    // Added in `glibc` 2.29
+    pub fn posix_spawn_file_actions_addfchdir_np(
+        actions: *mut ::posix_spawn_file_actions_t,
+        fd: ::c_int,
+    ) -> ::c_int;
+    // Added in `glibc` 2.34
+    pub fn posix_spawn_file_actions_addclosefrom_np(
+        actions: *mut ::posix_spawn_file_actions_t,
+        from: ::c_int,
+    ) -> ::c_int;
+    // Added in `glibc` 2.35
+    pub fn posix_spawn_file_actions_addtcsetpgrp_np(
+        actions: *mut ::posix_spawn_file_actions_t,
+        tcfd: ::c_int,
+    ) -> ::c_int;
+
+    // mntent.h
+    pub fn getmntent_r(
+        stream: *mut ::FILE,
+        mntbuf: *mut ::mntent,
+        buf: *mut ::c_char,
+        buflen: ::c_int,
+    ) -> *mut ::mntent;
+
+    pub fn execveat(
+        dirfd: ::c_int,
+        pathname: *const ::c_char,
+        argv: *const *mut c_char,
+        envp: *const *mut c_char,
+        flags: ::c_int,
+    ) -> ::c_int;
+
+    // Added in `glibc` 2.34
+    pub fn close_range(first: ::c_uint, last: ::c_uint, flags: ::c_int) -> ::c_int;
 }
 
 cfg_if! {
     if #[cfg(any(target_arch = "x86",
                  target_arch = "arm",
                  target_arch = "m68k",
+                 target_arch = "csky",
                  target_arch = "mips",
+                 target_arch = "mips32r6",
                  target_arch = "powerpc",
                  target_arch = "sparc",
                  target_arch = "riscv32"))] {
@@ -1349,9 +1555,11 @@ cfg_if! {
                         target_arch = "aarch64",
                         target_arch = "powerpc64",
                         target_arch = "mips64",
+                        target_arch = "mips64r6",
                         target_arch = "s390x",
                         target_arch = "sparc64",
-                        target_arch = "riscv64"))] {
+                        target_arch = "riscv64",
+                        target_arch = "loongarch64"))] {
         mod b64;
         pub use self::b64::*;
     } else {

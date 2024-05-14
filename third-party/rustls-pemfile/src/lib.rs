@@ -21,8 +21,11 @@
 //! for item in iter::from_fn(|| read_one(&mut reader).transpose()) {
 //!     match item.unwrap() {
 //!         Item::X509Certificate(cert) => println!("certificate {:?}", cert),
+//!         Item::Crl(crl) => println!("certificate revocation list: {:?}", crl),
 //!         Item::RSAKey(key) => println!("rsa pkcs1 key {:?}", key),
 //!         Item::PKCS8Key(key) => println!("pkcs8 key {:?}", key),
+//!         Item::ECKey(key) => println!("sec1 ec key {:?}", key),
+//!         _ => println!("unhandled item"),
 //!     }
 //! }
 //! ```
@@ -41,15 +44,9 @@
 #[cfg(test)]
 mod tests;
 
-
 /// --- Main crate APIs:
-
 mod pemfile;
-pub use pemfile::{
-    Item,
-    read_one,
-    read_all,
-};
+pub use pemfile::{read_all, read_one, Item};
 
 /// --- Legacy APIs:
 use std::io;
@@ -60,12 +57,29 @@ use std::io;
 /// This function does not fail if there are no certificates in the file --
 /// it returns an empty vector.
 pub fn certs(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
-    let mut certs = Vec::<Vec<u8>>::new();
+    let mut certs = Vec::new();
 
     loop {
         match read_one(rd)? {
             None => return Ok(certs),
             Some(Item::X509Certificate(cert)) => certs.push(cert),
+            _ => {}
+        };
+    }
+}
+
+/// Extract all the certificate revocation lists (CRLs) from `rd`, and return a vec of byte vecs
+/// containing the der-format contents.
+///
+/// This function does not fail if there are no CRLs in the file --
+/// it returns an empty vector.
+pub fn crls(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
+    let mut crls = Vec::new();
+
+    loop {
+        match read_one(rd)? {
+            None => return Ok(crls),
+            Some(Item::Crl(crl)) => crls.push(crl),
             _ => {}
         };
     }
@@ -77,7 +91,7 @@ pub fn certs(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
 /// This function does not fail if there are no keys in the file -- it returns an
 /// empty vector.
 pub fn rsa_private_keys(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
-    let mut keys = Vec::<Vec<u8>>::new();
+    let mut keys = Vec::new();
 
     loop {
         match read_one(rd)? {
@@ -94,7 +108,7 @@ pub fn rsa_private_keys(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Er
 /// This function does not fail if there are no keys in the file -- it returns an
 /// empty vector.
 pub fn pkcs8_private_keys(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
-    let mut keys = Vec::<Vec<u8>>::new();
+    let mut keys = Vec::new();
 
     loop {
         match read_one(rd)? {
@@ -105,3 +119,19 @@ pub fn pkcs8_private_keys(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::
     }
 }
 
+/// Extract all SEC1-encoded EC private keys from `rd`, and return a vec of
+/// byte vecs containing the der-format contents.
+///
+/// This function does not fail if there are no keys in the file -- it returns an
+/// empty vector.
+pub fn ec_private_keys(rd: &mut dyn io::BufRead) -> Result<Vec<Vec<u8>>, io::Error> {
+    let mut keys = Vec::new();
+
+    loop {
+        match read_one(rd)? {
+            None => return Ok(keys),
+            Some(Item::ECKey(key)) => keys.push(key),
+            _ => {}
+        };
+    }
+}

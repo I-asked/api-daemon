@@ -4,9 +4,7 @@ use super::{
     from_one_raw_str, EntityTag, Header, HeaderName, HeaderValue, HttpDate, InvalidHeaderValue,
     TryIntoHeaderValue, Writer,
 };
-use crate::error::ParseError;
-use crate::http::header;
-use crate::HttpMessage;
+use crate::{error::ParseError, http::header, HttpMessage};
 
 /// `If-Range` header, defined
 /// in [RFC 7233 §3.2](https://datatracker.ietf.org/doc/html/rfc7233#section-3.2)
@@ -57,7 +55,7 @@ use crate::HttpMessage;
 ///     IfRange::Date(fetched.into())
 /// );
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IfRange {
     /// The entity-tag the client has of the resource.
     EntityTag(EntityTag),
@@ -113,7 +111,7 @@ mod test_parse_and_format {
     use super::IfRange as HeaderField;
     use crate::http::header::*;
 
-    crate::http::header::common_header_test!(test1, vec![b"Sat, 29 Oct 1994 19:43:31 GMT"]);
-    crate::http::header::common_header_test!(test2, vec![b"\"abc\""]);
-    crate::http::header::common_header_test!(test3, vec![b"this-is-invalid"], None::<IfRange>);
+    crate::http::header::common_header_test!(test1, [b"Sat, 29 Oct 1994 19:43:31 GMT"]);
+    crate::http::header::common_header_test!(test2, [b"\"abc\""]);
+    crate::http::header::common_header_test!(test3, [b"this-is-invalid"], None::<IfRange>);
 }

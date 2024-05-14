@@ -4,15 +4,12 @@
 // Note: we don't use any of the standard 'cargo bench', 'test::Bencher',
 // etc. because it's unstable at the time of writing.
 
-use std::convert::TryInto;
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::key;
 use crate::verify;
 use crate::verify::ServerCertVerifier;
 use crate::{anchors, OwnedTrustAnchor};
-
-use webpki_roots;
 
 fn duration_nanos(d: Duration) -> u64 {
     ((d.as_secs() as f64) * 1e9 + (d.subsec_nanos() as f64)) as u64
@@ -188,9 +185,8 @@ struct Context {
 impl Context {
     fn new(name: &'static str, domain: &'static str, certs: &[&'static [u8]]) -> Self {
         let mut roots = anchors::RootCertStore::empty();
-        roots.add_server_trust_anchors(
+        roots.add_trust_anchors(
             webpki_roots::TLS_SERVER_ROOTS
-                .0
                 .iter()
                 .map(|ta| {
                     OwnedTrustAnchor::from_subject_spki_name_constraints(

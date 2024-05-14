@@ -51,13 +51,10 @@ compile_error!("io_uring is a linux only feature.");
 
 use std::future::Future;
 
-use tokio::task::JoinHandle;
-
 // Cannot define a main macro when compiled into test harness.
 // Workaround for https://github.com/rust-lang/rust/issues/62127.
 #[cfg(all(feature = "macros", not(test)))]
 pub use actix_macros::main;
-
 #[cfg(feature = "macros")]
 pub use actix_macros::test;
 
@@ -65,11 +62,14 @@ mod arbiter;
 mod runtime;
 mod system;
 
-pub use self::arbiter::{Arbiter, ArbiterHandle};
-pub use self::runtime::Runtime;
-pub use self::system::{System, SystemRunner};
-
 pub use tokio::pin;
+use tokio::task::JoinHandle;
+
+pub use self::{
+    arbiter::{Arbiter, ArbiterHandle},
+    runtime::Runtime,
+    system::{System, SystemRunner},
+};
 
 pub mod signal {
     //! Asynchronous signal handling (Tokio re-exports).
@@ -91,13 +91,13 @@ pub mod net {
         task::{Context, Poll},
     };
 
-    pub use tokio::io::Ready;
     use tokio::io::{AsyncRead, AsyncWrite, Interest};
-    pub use tokio::net::UdpSocket;
-    pub use tokio::net::{TcpListener, TcpSocket, TcpStream};
-
     #[cfg(unix)]
     pub use tokio::net::{UnixDatagram, UnixListener, UnixStream};
+    pub use tokio::{
+        io::Ready,
+        net::{TcpListener, TcpSocket, TcpStream, UdpSocket},
+    };
 
     /// Extension trait over async read+write types that can also signal readiness.
     #[doc(hidden)]
@@ -156,10 +156,9 @@ pub mod net {
 pub mod time {
     //! Utilities for tracking time (Tokio re-exports).
 
-    pub use tokio::time::Instant;
-    pub use tokio::time::{interval, interval_at, Interval};
-    pub use tokio::time::{sleep, sleep_until, Sleep};
-    pub use tokio::time::{timeout, Timeout};
+    pub use tokio::time::{
+        interval, interval_at, sleep, sleep_until, timeout, Instant, Interval, Sleep, Timeout,
+    };
 }
 
 pub mod task {
@@ -198,6 +197,7 @@ pub mod task {
 /// assert!(handle.await.unwrap_err().is_cancelled());
 /// # });
 /// ```
+#[track_caller]
 #[inline]
 pub fn spawn<Fut>(f: Fut) -> JoinHandle<Fut::Output>
 where

@@ -70,13 +70,14 @@ mod inner {
         task::{Context, Poll},
     };
 
+    use actix_codec::Framed;
     use actix_service::{IntoService, Service};
     use futures_core::stream::Stream;
     use local_channel::mpsc;
-    use log::debug;
     use pin_project_lite::pin_project;
-
-    use actix_codec::{AsyncRead, AsyncWrite, Decoder, Encoder, Framed};
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio_util::codec::{Decoder, Encoder};
+    use tracing::debug;
 
     use crate::{body::BoxBody, Response};
 
@@ -411,9 +412,7 @@ mod inner {
                     }
                     State::Error(_) => {
                         // flush write buffer
-                        if !this.framed.is_write_buf_empty()
-                            && this.framed.flush(cx).is_pending()
-                        {
+                        if !this.framed.is_write_buf_empty() && this.framed.flush(cx).is_pending() {
                             return Poll::Pending;
                         }
                         Poll::Ready(Err(this.state.take_error()))

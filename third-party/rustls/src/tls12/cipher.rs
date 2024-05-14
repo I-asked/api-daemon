@@ -1,8 +1,9 @@
 use crate::cipher::{make_nonce, Iv, MessageDecrypter, MessageEncrypter};
+use crate::enums::ContentType;
+use crate::enums::ProtocolVersion;
 use crate::error::Error;
 use crate::msgs::base::Payload;
 use crate::msgs::codec;
-use crate::msgs::enums::{ContentType, ProtocolVersion};
 use crate::msgs::fragmenter::MAX_FRAGMENT_LEN;
 use crate::msgs::message::{BorrowedPlainMessage, OpaqueMessage, PlainMessage};
 
@@ -15,13 +16,13 @@ fn make_tls12_aad(
     typ: ContentType,
     vers: ProtocolVersion,
     len: usize,
-) -> ring::aead::Aad<[u8; TLS12_AAD_SIZE]> {
+) -> aead::Aad<[u8; TLS12_AAD_SIZE]> {
     let mut out = [0; TLS12_AAD_SIZE];
     codec::put_u64(seq, &mut out[0..]);
     out[8] = typ.get_u8();
     codec::put_u16(vers.get_u16(), &mut out[9..]);
     codec::put_u16(len as u16, &mut out[11..]);
-    ring::aead::Aad::from(out)
+    aead::Aad::from(out)
 }
 
 pub(crate) struct AesGcm;
@@ -154,7 +155,7 @@ impl MessageEncrypter for GcmMessageEncrypter {
         self.enc_key
             .seal_in_place_separate_tag(nonce, aad, &mut payload[GCM_EXPLICIT_NONCE_LEN..])
             .map(|tag| payload.extend(tag.as_ref()))
-            .map_err(|_| Error::General("encrypt failed".to_string()))?;
+            .map_err(|_| Error::EncryptError)?;
 
         Ok(OpaqueMessage {
             typ: msg.typ,
@@ -224,7 +225,7 @@ impl MessageEncrypter for ChaCha20Poly1305MessageEncrypter {
 
         self.enc_key
             .seal_in_place_append_tag(nonce, aad, &mut buf)
-            .map_err(|_| Error::General("encrypt failed".to_string()))?;
+            .map_err(|_| Error::EncryptError)?;
 
         Ok(OpaqueMessage {
             typ: msg.typ,

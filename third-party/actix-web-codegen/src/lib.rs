@@ -46,9 +46,20 @@
 //! ```
 //!
 //! # Multiple Path Handlers
-//! There are no macros to generate multi-path handlers. Let us know in [this issue].
+//! Acts as a wrapper for multiple single method handler macros. It takes no arguments and
+//! delegates those to the macros for the individual methods. See [macro@routes] macro docs.
 //!
-//! [this issue]: https://github.com/actix/actix-web/issues/1709
+//! ```
+//! # use actix_web::HttpResponse;
+//! # use actix_web_codegen::routes;
+//! #[routes]
+//! #[get("/test")]
+//! #[get("/test2")]
+//! #[delete("/test")]
+//! async fn example() -> HttpResponse {
+//!     HttpResponse::Ok().finish()
+//! }
+//! ```
 //!
 //! [actix-web attributes docs]: https://docs.rs/actix-web/latest/actix_web/#attributes
 //! [GET]: macro@get
@@ -64,6 +75,9 @@
 #![recursion_limit = "512"]
 #![deny(rust_2018_idioms, nonstandard_style)]
 #![warn(future_incompatible)]
+#![doc(html_logo_url = "https://actix.rs/img/logo.png")]
+#![doc(html_favicon_url = "https://actix.rs/favicon.ico")]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -94,7 +108,7 @@ mod route;
 /// ```
 /// # use actix_web::HttpResponse;
 /// # use actix_web_codegen::route;
-/// #[route("/test", method = "GET", method = "HEAD")]
+/// #[route("/test", method = "GET", method = "HEAD", method = "CUSTOM")]
 /// async fn example() -> HttpResponse {
 ///     HttpResponse::Ok().finish()
 /// }
@@ -104,39 +118,72 @@ pub fn route(args: TokenStream, input: TokenStream) -> TokenStream {
     route::with_method(None, args, input)
 }
 
-macro_rules! method_macro {
-    ($variant:ident, $method:ident) => {
-#[doc = concat!("Creates route handler with `actix_web::guard::", stringify!($variant), "`.")]
+/// Creates resource handler, allowing multiple HTTP methods and paths.
 ///
 /// # Syntax
 /// ```plain
-#[doc = concat!("#[", stringify!($method), r#"("path"[, attributes])]"#)]
+/// #[routes]
+/// #[<method>("path", ...)]
+/// #[<method>("path", ...)]
+/// ...
 /// ```
 ///
 /// # Attributes
-/// - `"path"`: Raw literal string with path for which to register handler.
-/// - `name = "resource_name"`: Specifies resource name for the handler. If not set, the function
-///   name of handler is used.
-/// - `guard = "function_name"`: Registers function as guard using `actix_web::guard::fn_guard`.
-/// - `wrap = "Middleware"`: Registers a resource middleware.
+/// The `routes` macro itself has no parameters, but allows specifying the attribute macros for
+/// the multiple paths and/or methods, e.g. [`GET`](macro@get) and [`POST`](macro@post).
 ///
-/// # Notes
-/// Function name can be specified as any expression that is going to be accessible to the
-/// generate code, e.g `my_guard` or `my_module::my_guard`.
+/// These helper attributes take the same parameters as the [single method handlers](crate#single-method-handler).
 ///
 /// # Examples
 /// ```
 /// # use actix_web::HttpResponse;
-#[doc = concat!("# use actix_web_codegen::", stringify!($method), ";")]
-#[doc = concat!("#[", stringify!($method), r#"("/")]"#)]
+/// # use actix_web_codegen::routes;
+/// #[routes]
+/// #[get("/test")]
+/// #[get("/test2")]
+/// #[delete("/test")]
 /// async fn example() -> HttpResponse {
 ///     HttpResponse::Ok().finish()
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn $method(args: TokenStream, input: TokenStream) -> TokenStream {
-    route::with_method(Some(route::MethodType::$variant), args, input)
+pub fn routes(_: TokenStream, input: TokenStream) -> TokenStream {
+    route::with_methods(input)
 }
+
+macro_rules! method_macro {
+    ($variant:ident, $method:ident) => {
+        #[doc = concat!("Creates route handler with `actix_web::guard::", stringify!($variant), "`.")]
+        ///
+        /// # Syntax
+        /// ```plain
+        #[doc = concat!("#[", stringify!($method), r#"("path"[, attributes])]"#)]
+        /// ```
+        ///
+        /// # Attributes
+        /// - `"path"`: Raw literal string with path for which to register handler.
+        /// - `name = "resource_name"`: Specifies resource name for the handler. If not set, the
+        ///   function name of handler is used.
+        /// - `guard = "function_name"`: Registers function as guard using `actix_web::guard::fn_guard`.
+        /// - `wrap = "Middleware"`: Registers a resource middleware.
+        ///
+        /// # Notes
+        /// Function name can be specified as any expression that is going to be accessible to the
+        /// generate code, e.g `my_guard` or `my_module::my_guard`.
+        ///
+        /// # Examples
+        /// ```
+        /// # use actix_web::HttpResponse;
+        #[doc = concat!("# use actix_web_codegen::", stringify!($method), ";")]
+        #[doc = concat!("#[", stringify!($method), r#"("/")]"#)]
+        /// async fn example() -> HttpResponse {
+        ///     HttpResponse::Ok().finish()
+        /// }
+        /// ```
+        #[proc_macro_attribute]
+        pub fn $method(args: TokenStream, input: TokenStream) -> TokenStream {
+            route::with_method(Some(route::MethodType::$variant), args, input)
+        }
     };
 }
 
@@ -174,7 +221,7 @@ pub fn main(_: TokenStream, item: TokenStream) -> TokenStream {
     output
 }
 
-/// Marks async test functions to use the actix system entry-point.
+/// Marks async test functions to use the Actix Web system entry-point.
 ///
 /// # Examples
 /// ```

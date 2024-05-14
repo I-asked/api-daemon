@@ -1,8 +1,9 @@
-use std::borrow::Cow;
-use std::ops::{DerefMut, Index};
+use std::{
+    borrow::Cow,
+    ops::{DerefMut, Index},
+};
 
-use firestorm::profile_method;
-use serde::de;
+use serde::{de, Deserialize};
 
 use crate::{de::PathDeserializer, Resource, ResourcePath};
 
@@ -23,8 +24,13 @@ impl Default for PathItem {
 /// If resource path contains variable patterns, `Path` stores them.
 #[derive(Debug, Clone, Default)]
 pub struct Path<T> {
+    /// Full path representation.
     path: T,
+
+    /// Number of characters in `path` that have been processed into `segments`.
     pub(crate) skip: u16,
+
+    /// List of processed dynamic segments; name->value pairs.
     pub(crate) segments: Vec<(Cow<'static, str>, PathItem)>,
 }
 
@@ -52,7 +58,6 @@ impl<T: ResourcePath> Path<T> {
     /// Returns full path as a string.
     #[inline]
     pub fn as_str(&self) -> &str {
-        profile_method!(as_str);
         self.path.path()
     }
 
@@ -61,7 +66,6 @@ impl<T: ResourcePath> Path<T> {
     /// Returns empty string if no more is to be processed.
     #[inline]
     pub fn unprocessed(&self) -> &str {
-        profile_method!(unprocessed);
         // clamp skip to path length
         let skip = (self.skip as usize).min(self.as_str().len());
         &self.path.path()[skip..]
@@ -72,8 +76,6 @@ impl<T: ResourcePath> Path<T> {
     #[deprecated(since = "0.6.0", note = "Use `.as_str()` or `.unprocessed()`.")]
     #[inline]
     pub fn path(&self) -> &str {
-        profile_method!(path);
-
         let skip = self.skip as usize;
         let path = self.path.path();
         if skip <= path.len() {
@@ -86,18 +88,14 @@ impl<T: ResourcePath> Path<T> {
     /// Set new path.
     #[inline]
     pub fn set(&mut self, path: T) {
-        profile_method!(set);
-
-        self.skip = 0;
         self.path = path;
+        self.skip = 0;
         self.segments.clear();
     }
 
     /// Reset state.
     #[inline]
     pub fn reset(&mut self) {
-        profile_method!(reset);
-
         self.skip = 0;
         self.segments.clear();
     }
@@ -105,15 +103,12 @@ impl<T: ResourcePath> Path<T> {
     /// Skip first `n` chars in path.
     #[inline]
     pub fn skip(&mut self, n: u16) {
-        profile_method!(skip);
         self.skip += n;
     }
 
     pub(crate) fn add(&mut self, name: impl Into<Cow<'static, str>>, value: PathItem) {
-        profile_method!(add);
-
         match value {
-            PathItem::Static(s) => self.segments.push((name.into(), PathItem::Static(s))),
+            PathItem::Static(seg) => self.segments.push((name.into(), PathItem::Static(seg))),
             PathItem::Segment(begin, end) => self.segments.push((
                 name.into(),
                 PathItem::Segment(self.skip + begin, self.skip + end),
@@ -127,8 +122,6 @@ impl<T: ResourcePath> Path<T> {
         name: impl Into<Cow<'static, str>>,
         value: impl Into<Cow<'static, str>>,
     ) {
-        profile_method!(add_static);
-
         self.segments
             .push((name.into(), PathItem::Static(value.into())));
     }
@@ -147,8 +140,6 @@ impl<T: ResourcePath> Path<T> {
 
     /// Get matched parameter by name without type conversion
     pub fn get(&self, name: &str) -> Option<&str> {
-        profile_method!(get);
-
         for (seg_name, val) in self.segments.iter() {
             if name == seg_name {
                 return match val {
@@ -167,8 +158,6 @@ impl<T: ResourcePath> Path<T> {
     ///
     /// If keyed parameter is not available empty string is used as default value.
     pub fn query(&self, key: &str) -> &str {
-        profile_method!(query);
-
         if let Some(s) = self.get(key) {
             s
         } else {
@@ -184,10 +173,13 @@ impl<T: ResourcePath> Path<T> {
         }
     }
 
-    /// Try to deserialize matching parameters to a specified type `U`
-    pub fn load<'de, U: serde::Deserialize<'de>>(&'de self) -> Result<U, de::value::Error> {
-        profile_method!(load);
-        de::Deserialize::deserialize(PathDeserializer::new(self))
+    /// Deserializes matching parameters to a specified type `U`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error when dynamic path segments cannot be deserialized into a `U` type.
+    pub fn load<'de, U: Deserialize<'de>>(&'de self) -> Result<U, de::value::Error> {
+        Deserialize::deserialize(PathDeserializer::new(self))
     }
 }
 
@@ -261,6 +253,7 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::needless_borrow)]
     #[test]
     fn deref_impls() {
         let mut foo = Path::new("/foo");

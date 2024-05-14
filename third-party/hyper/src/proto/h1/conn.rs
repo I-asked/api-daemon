@@ -1,6 +1,9 @@
 use std::fmt;
 use std::io;
 use std::marker::PhantomData;
+use std::marker::Unpin;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 #[cfg(all(feature = "server", feature = "runtime"))]
 use std::time::Duration;
 
@@ -16,7 +19,6 @@ use tracing::{debug, error, trace};
 use super::io::Buffered;
 use super::{Decoder, Encode, EncodedBuf, Encoder, Http1Transaction, ParseContext, Wants};
 use crate::body::DecodedLength;
-use crate::common::{task, Pin, Poll, Unpin};
 use crate::headers::connection_keep_alive;
 use crate::proto::{BodyLength, MessageHead};
 
@@ -58,6 +60,8 @@ where
                 #[cfg(all(feature = "server", feature = "runtime"))]
                 h1_header_read_timeout_running: false,
                 preserve_header_case: false,
+                #[cfg(feature = "ffi")]
+                preserve_header_order: false,
                 title_case_headers: false,
                 h09_responses: false,
                 #[cfg(feature = "ffi")]
@@ -111,6 +115,11 @@ where
         self.state.preserve_header_case = true;
     }
 
+    #[cfg(feature = "ffi")]
+    pub(crate) fn set_preserve_header_order(&mut self) {
+        self.state.preserve_header_order = true;
+    }
+
     #[cfg(feature = "client")]
     pub(crate) fn set_h09_responses(&mut self) {
         self.state.h09_responses = true;
@@ -148,19 +157,15 @@ where
     }
 
     pub(crate) fn can_read_head(&self) -> bool {
-        match self.state.reading {
-            Reading::Init => {
-                if T::should_read_first() {
-                    true
-                } else {
-                    match self.state.writing {
-                        Writing::Init => false,
-                        _ => true,
-                    }
-                }
-            }
-            _ => false,
+        if !matches!(self.state.reading, Reading::Init) {
+            return false;
         }
+
+        if T::should_read_first() {
+            return true;
+        }
+
+        !matches!(self.state.writing, Writing::Init)
     }
 
     pub(crate) fn can_read_body(&self) -> bool {
@@ -182,7 +187,7 @@ where
 
     pub(super) fn poll_read_head(
         &mut self,
-        cx: &mut task::Context<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<Option<crate::Result<(MessageHead<T::Incoming>, DecodedLength, Wants)>>> {
         debug_assert!(self.can_read_head());
         trace!("Conn::read_head");
@@ -200,6 +205,8 @@ where
                 #[cfg(all(feature = "server", feature = "runtime"))]
                 h1_header_read_timeout_running: &mut self.state.h1_header_read_timeout_running,
                 preserve_header_case: self.state.preserve_header_case,
+                #[cfg(feature = "ffi")]
+                preserve_header_order: self.state.preserve_header_order,
                 h09_responses: self.state.h09_responses,
                 #[cfg(feature = "ffi")]
                 on_informational: &mut self.state.on_informational,
@@ -281,7 +288,7 @@ where
 
     pub(crate) fn poll_read_body(
         &mut self,
-        cx: &mut task::Context<'_>,
+        cx: &mut Context<'_>,
     ) -> Poll<Option<io::Result<Bytes>>> {
         debug_assert!(self.can_read_body());
 
@@ -342,10 +349,7 @@ where
         ret
     }
 
-    pub(crate) fn poll_read_keep_alive(
-        &mut self,
-        cx: &mut task::Context<'_>,
-    ) -> Poll<crate::Result<()>> {
+    pub(crate) fn poll_read_keep_alive(&mut self, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body());
 
         if self.is_read_closed() {
@@ -358,17 +362,17 @@ where
     }
 
     fn is_mid_message(&self) -> bool {
-        match (&self.state.reading, &self.state.writing) {
-            (&Reading::Init, &Writing::Init) => false,
-            _ => true,
-        }
+        !matches!(
+            (&self.state.reading, &self.state.writing),
+            (&Reading::Init, &Writing::Init)
+        )
     }
 
     // This will check to make sure the io object read is empty.
     //
     // This should only be called for Clients wanting to enter the idle
     // state.
-    fn require_empty_read(&mut self, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
+    fn require_empty_read(&mut self, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body() && !self.is_read_closed());
         debug_assert!(!self.is_mid_message());
         debug_assert!(T::is_client());
@@ -401,7 +405,7 @@ where
         Poll::Ready(Err(crate::Error::new_unexpected_message()))
     }
 
-    fn mid_message_detect_eof(&mut self, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
+    fn mid_message_detect_eof(&mut self, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
         debug_assert!(!self.can_read_head() && !self.can_read_body() && !self.is_read_closed());
         debug_assert!(self.is_mid_message());
 
@@ -420,7 +424,7 @@ where
         }
     }
 
-    fn force_io_read(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<usize>> {
+    fn force_io_read(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<usize>> {
         debug_assert!(!self.state.is_read_closed());
 
         let result = ready!(self.io.poll_read_from_io(cx));
@@ -431,7 +435,7 @@ where
         }))
     }
 
-    fn maybe_notify(&mut self, cx: &mut task::Context<'_>) {
+    fn maybe_notify(&mut self, cx: &mut Context<'_>) {
         // its possible that we returned NotReady from poll() without having
         // exhausted the underlying Io. We would have done this when we
         // determined we couldn't keep reading until we knew how writing
@@ -478,17 +482,16 @@ where
         }
     }
 
-    fn try_keep_alive(&mut self, cx: &mut task::Context<'_>) {
+    fn try_keep_alive(&mut self, cx: &mut Context<'_>) {
         self.state.try_keep_alive::<T>();
         self.maybe_notify(cx);
     }
 
     pub(crate) fn can_write_head(&self) -> bool {
-        if !T::should_read_first() {
-            if let Reading::Closed = self.state.reading {
-                return false;
-            }
+        if !T::should_read_first() && matches!(self.state.reading, Reading::Closed) {
+            return false;
         }
+
         match self.state.writing {
             Writing::Init => self.io.can_headers_buf(),
             _ => false,
@@ -582,7 +585,7 @@ where
         }
     }
 
-    // Fix keep-alives when Connection: keep-alive header is not present
+    // Fix keep-alive when Connection: keep-alive header is not present
     fn fix_keep_alive(&mut self, head: &mut MessageHead<T::Outgoing>) {
         let outgoing_is_keep_alive = head
             .headers
@@ -632,14 +635,14 @@ where
             Writing::Body(ref mut encoder) => {
                 self.io.buffer(encoder.encode(chunk));
 
-                if encoder.is_eof() {
-                    if encoder.is_last() {
-                        Writing::Closed
-                    } else {
-                        Writing::KeepAlive
-                    }
-                } else {
+                if !encoder.is_eof() {
                     return;
+                }
+
+                if encoder.is_last() {
+                    Writing::Closed
+                } else {
+                    Writing::KeepAlive
                 }
             }
             _ => unreachable!("write_body invalid state: {:?}", self.state.writing),
@@ -671,34 +674,31 @@ where
     pub(crate) fn end_body(&mut self) -> crate::Result<()> {
         debug_assert!(self.can_write_body());
 
-        let mut res = Ok(());
-        let state = match self.state.writing {
-            Writing::Body(ref mut encoder) => {
-                // end of stream, that means we should try to eof
-                match encoder.end() {
-                    Ok(end) => {
-                        if let Some(end) = end {
-                            self.io.buffer(end);
-                        }
-                        if encoder.is_last() || encoder.is_close_delimited() {
-                            Writing::Closed
-                        } else {
-                            Writing::KeepAlive
-                        }
-                    }
-                    Err(_not_eof) => {
-                        res = Err(crate::Error::new_user_body(
-                            crate::Error::new_body_write_aborted(),
-                        ));
-                        Writing::Closed
-                    }
-                }
-            }
+        let encoder = match self.state.writing {
+            Writing::Body(ref mut enc) => enc,
             _ => return Ok(()),
         };
 
-        self.state.writing = state;
-        res
+        // end of stream, that means we should try to eof
+        match encoder.end() {
+            Ok(end) => {
+                if let Some(end) = end {
+                    self.io.buffer(end);
+                }
+
+                self.state.writing = if encoder.is_last() || encoder.is_close_delimited() {
+                    Writing::Closed
+                } else {
+                    Writing::KeepAlive
+                };
+
+                Ok(())
+            }
+            Err(not_eof) => {
+                self.state.writing = Writing::Closed;
+                Err(crate::Error::new_body_write_aborted().with(not_eof))
+            }
+        }
     }
 
     // When we get a parse error, depending on what side we are, we might be able
@@ -725,14 +725,14 @@ where
         Err(err)
     }
 
-    pub(crate) fn poll_flush(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+    pub(crate) fn poll_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         ready!(Pin::new(&mut self.io).poll_flush(cx))?;
         self.try_keep_alive(cx);
         trace!("flushed({}): {:?}", T::LOG, self.state);
         Poll::Ready(Ok(()))
     }
 
-    pub(crate) fn poll_shutdown(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+    pub(crate) fn poll_shutdown(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match ready!(Pin::new(self.io.io_mut()).poll_shutdown(cx)) {
             Ok(()) => {
                 trace!("shut down IO complete");
@@ -746,15 +746,18 @@ where
     }
 
     /// If the read side can be cheaply drained, do so. Otherwise, close.
-    pub(super) fn poll_drain_or_close_read(&mut self, cx: &mut task::Context<'_>) {
+    pub(super) fn poll_drain_or_close_read(&mut self, cx: &mut Context<'_>) {
+        if let Reading::Continue(ref decoder) = self.state.reading {
+            // skip sending the 100-continue
+            // just move forward to a read, in case a tiny body was included
+            self.state.reading = Reading::Body(decoder.clone());
+        }
+
         let _ = self.poll_read_body(cx);
 
         // If still in Reading::Body, just give up
         match self.state.reading {
-            Reading::Init | Reading::KeepAlive => {
-                trace!("body drained");
-                return;
-            }
+            Reading::Init | Reading::KeepAlive => trace!("body drained"),
             _ => self.close_read(),
         }
     }
@@ -826,6 +829,8 @@ struct State {
     #[cfg(all(feature = "server", feature = "runtime"))]
     h1_header_read_timeout_running: bool,
     preserve_header_case: bool,
+    #[cfg(feature = "ffi")]
+    preserve_header_order: bool,
     title_case_headers: bool,
     h09_responses: bool,
     /// If set, called with each 1xx informational response received for
@@ -1003,43 +1008,35 @@ impl State {
 
         self.method = None;
         self.keep_alive.idle();
-        if self.is_idle() {
-            self.reading = Reading::Init;
-            self.writing = Writing::Init;
 
-            // !T::should_read_first() means Client.
-            //
-            // If Client connection has just gone idle, the Dispatcher
-            // should try the poll loop one more time, so as to poll the
-            // pending requests stream.
-            if !T::should_read_first() {
-                self.notify_read = true;
-            }
-        } else {
+        if !self.is_idle() {
             self.close();
+            return;
+        }
+
+        self.reading = Reading::Init;
+        self.writing = Writing::Init;
+
+        // !T::should_read_first() means Client.
+        //
+        // If Client connection has just gone idle, the Dispatcher
+        // should try the poll loop one more time, so as to poll the
+        // pending requests stream.
+        if !T::should_read_first() {
+            self.notify_read = true;
         }
     }
 
     fn is_idle(&self) -> bool {
-        if let KA::Idle = self.keep_alive.status() {
-            true
-        } else {
-            false
-        }
+        matches!(self.keep_alive.status(), KA::Idle)
     }
 
     fn is_read_closed(&self) -> bool {
-        match self.reading {
-            Reading::Closed => true,
-            _ => false,
-        }
+        matches!(self.reading, Reading::Closed)
     }
 
     fn is_write_closed(&self) -> bool {
-        match self.writing {
-            Writing::Closed => true,
-            _ => false,
-        }
+        matches!(self.writing, Writing::Closed)
     }
 
     fn prepare_upgrade(&mut self) -> crate::upgrade::OnUpgrade {

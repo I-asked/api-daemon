@@ -1,11 +1,11 @@
 winreg
-[![Winreg on Appveyor][appveyor-image]][appveyor]
+[![Github Actions][actions-image]][actions]
 [![Winreg on crates.io][cratesio-image]][cratesio]
 [![Winreg on docs.rs][docsrs-image]][docsrs]
 ======
 
-[appveyor-image]: https://ci.appveyor.com/api/projects/status/f3lwrt67ghrf5omd?svg=true
-[appveyor]: https://ci.appveyor.com/project/gentoo90/winreg-rs
+[actions-image]: https://github.com/gentoo90/winreg-rs/actions/workflows/ci.yaml/badge.svg
+[actions]: https://github.com/gentoo90/winreg-rs/actions
 [cratesio-image]: https://img.shields.io/crates/v/winreg.svg
 [cratesio]: https://crates.io/crates/winreg
 [docsrs-image]: https://docs.rs/winreg/badge.svg
@@ -16,15 +16,18 @@ Rust bindings to MS Windows Registry API. Work in progress.
 Current features:
 * Basic registry operations:
     * open/create/delete keys
+    * load application hive from a file
     * read and write values
     * seamless conversion between `REG_*` types and rust primitives
         * `String` and `OsString` <= `REG_SZ`, `REG_EXPAND_SZ` or `REG_MULTI_SZ`
-        * `String`, `&str` and `OsStr` => `REG_SZ`
+        * `String`, `&str`, `OsString`, `&OsStr` => `REG_SZ`
+        * `Vec<String>`, `Vec<OsString>` <= `REG_MULTI_SZ`
+        * `Vec<String>`, `Vec<&str>`, `Vec<OsString>`, `Vec<&OsStr>` => `REG_MULTI_SZ`
         * `u32` <=> `REG_DWORD`
         * `u64` <=> `REG_QWORD`
 * Iteration through key names and through values
 * Transactions
-* Transacted serialization of rust types into/from registry (only primitives and structures for now)
+* Transacted serialization of rust types into/from registry (only primitives, structures and maps for now)
 
 ## Usage
 
@@ -33,11 +36,10 @@ Current features:
 ```toml
 # Cargo.toml
 [dependencies]
-winreg = "0.7"
+winreg = "0.50"
 ```
 
 ```rust
-extern crate winreg;
 use std::io;
 use std::path::Path;
 use winreg::enums::*;
@@ -54,7 +56,7 @@ fn main() -> io::Result<()> {
     println!("info = {:?}", info);
     let mt = info.get_last_write_time_system();
     println!(
-        "last_write_time as winapi::um::minwinbase::SYSTEMTIME = {}-{:02}-{:02} {:02}:{:02}:{:02}",
+        "last_write_time as windows_sys::Win32::Foundation::SYSTEMTIME = {}-{:02}-{:02} {:02}:{:02}:{:02}",
         mt.wYear, mt.wMonth, mt.wDay, mt.wHour, mt.wMinute, mt.wSecond
     );
 
@@ -78,6 +80,11 @@ fn main() -> io::Result<()> {
     let sz_val: String = key.get_value("TestSZ")?;
     key.delete_value("TestSZ")?;
     println!("TestSZ = {}", sz_val);
+
+    key.set_value("TestMultiSZ", &vec!["written", "by", "Rust"])?;
+    let multi_sz_val: Vec<String> = key.get_value("TestMultiSZ")?;
+    key.delete_value("TestMultiSZ")?;
+    println!("TestMultiSZ = {:?}", multi_sz_val);
 
     key.set_value("TestDWORD", &1234567890u32)?;
     let dword_val: u32 = key.get_value("TestDWORD")?;
@@ -103,7 +110,6 @@ fn main() -> io::Result<()> {
 ### Iterators
 
 ```rust
-extern crate winreg;
 use std::io;
 use winreg::RegKey;
 use winreg::enums::*;
@@ -132,11 +138,10 @@ fn main() -> io::Result<()> {
 ```toml
 # Cargo.toml
 [dependencies]
-winreg = { version = "0.7", features = ["transactions"] }
+winreg = { version = "0.50", features = ["transactions"] }
 ```
 
 ```rust
-extern crate winreg;
 use std::io;
 use winreg::RegKey;
 use winreg::enums::*;
@@ -174,15 +179,14 @@ fn main() -> io::Result<()> {
 ```toml
 # Cargo.toml
 [dependencies]
-winreg = { version = "0.7", features = ["serialization-serde"] }
+winreg = { version = "0.50", features = ["serialization-serde"] }
 serde = "1"
 serde_derive = "1"
 ```
 
 ```rust
-#[macro_use]
-extern crate serde_derive;
-extern crate winreg;
+use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
 use winreg::enums::*;
 
@@ -213,7 +217,10 @@ struct Test {
     t_u64: u64,
     t_usize: usize,
     t_struct: Rectangle,
+    t_map: HashMap<String, u32>,
     t_string: String,
+    #[serde(rename = "")] // empty name becomes the (Default) value in the registry
+    t_char: char,
     t_i8: i8,
     t_i16: i16,
     t_i32: i32,
@@ -223,28 +230,37 @@ struct Test {
     t_f32: f32,
 }
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
     let (key, _disp) = hkcu.create_subkey("Software\\RustEncode")?;
-    let v1 = Test{
+
+    let mut map = HashMap::new();
+    map.insert("".to_owned(), 0); // empty name becomes the (Default) value in the registry
+    map.insert("v1".to_owned(), 1);
+    map.insert("v2".to_owned(), 2);
+    map.insert("v3".to_owned(), 3);
+
+    let v1 = Test {
         t_bool: false,
         t_u8: 127,
         t_u16: 32768,
-        t_u32: 123456789,
-        t_u64: 123456789101112,
-        t_usize: 1234567891,
-        t_struct: Rectangle{
-            coords: Coords{ x: 55, y: 77 },
-            size: Size{ w: 500, h: 300 },
+        t_u32: 123_456_789,
+        t_u64: 123_456_789_101_112,
+        t_usize: 1_234_567_891,
+        t_struct: Rectangle {
+            coords: Coords { x: 55, y: 77 },
+            size: Size { w: 500, h: 300 },
         },
+        t_map: map,
         t_string: "test 123!".to_owned(),
+        t_char: 'a',
         t_i8: -123,
         t_i16: -2049,
         t_i32: 20100,
-        t_i64: -12345678910,
-        t_isize: -1234567890,
+        t_i64: -12_345_678_910,
+        t_isize: -1_234_567_890,
         t_f64: -0.01,
-        t_f32: 3.14,
+        t_f32: 3.15,
     };
 
     key.encode(&v1)?;
@@ -256,75 +272,3 @@ fn main() -> Result<(), Box<Error>> {
     Ok(())
 }
 ```
-
-## Changelog
-
-### 0.7.0
-
-* Breaking change: remove deprecated `Error::description` ([#28](https://github.com/gentoo90/winreg-rs/pull/28))
-* Optimize `Iterator::nth()` for the `Enum*` iterators ([#29](https://github.com/gentoo90/winreg-rs/pull/29))
-
-### 0.6.2
-
-* Add `RegKey::delete_subkey_with_flags()` ([#27](https://github.com/gentoo90/winreg-rs/pull/27))
-
-### 0.6.1
-
-* Add `last_write_time` field to `RegKeyMetadata` (returned by `RegKey::query_info()`) ([#25](https://github.com/gentoo90/winreg-rs/pull/25)).
-* Add `get_last_write_time_system()` and `get_last_write_time_chrono()` (under `chrono` feature) methods to `RegKeyMetadata`.
-
-### 0.6.0
-
-* Breaking change: `create_subkey`, `create_subkey_with_flags`, `create_subkey_transacted` and
-`create_subkey_transacted_with_flags` now return a tuple which contains the subkey and its disposition
-which can be `REG_CREATED_NEW_KEY` or `REG_OPENED_EXISTING_KEY` ([#21](https://github.com/gentoo90/winreg-rs/issues/21)).
-* Examples fixed to not use `unwrap` according to [Rust API guidelines](https://rust-lang-nursery.github.io/api-guidelines/documentation.html#examples-use--not-try-not-unwrap-c-question-mark).
-
-### 0.5.1
-
-* Reexport `HKEY` ([#15](https://github.com/gentoo90/winreg-rs/issues/15)).
-* Add `raw_handle` method ([#18](https://github.com/gentoo90/winreg-rs/pull/18)).
-
-### 0.5.0
-
-* Breaking change: `open_subkey` now opens a key with readonly permissions.
-Use `create_subkey` or `open_subkey_with_flags` to open with read-write permissins.
-* Breaking change: features `transactions` and `serialization-serde` are now disabled by default.
-* Breaking change: serialization now uses `serde` instead of `rustc-serialize`.
-* `winapi` updated to `0.3`.
-* Documentation fixes ([#14](https://github.com/gentoo90/winreg-rs/pull/14))
-
-### 0.4.0
-
-* Make transactions and serialization otional features
-* Update dependensies + minor fixes ([#12](https://github.com/gentoo90/winreg-rs/pull/12))
-
-### 0.3.5
-
-* Implement `FromRegValue` for `OsString` and `ToRegValue` for `OsStr` ([#8](https://github.com/gentoo90/winreg-rs/issues/8))
-* Minor fixes
-
-### 0.3.4
-
-* Add `copy_tree` method to `RegKey`
-* Now checked with [rust-clippy](https://github.com/Manishearth/rust-clippy)
-    * no more `unwrap`s
-    * replaced `to_string` with `to_owned`
-* Fix: reading strings longer than 2048 characters ([#6](https://github.com/gentoo90/winreg-rs/pull/6))
-
-### 0.3.3
-
-* Fix: now able to read values longer than 2048 bytes ([#3](https://github.com/gentoo90/winreg-rs/pull/3))
-
-### 0.3.2
-
-* Fix: `FromRegValue` trait now requires `Sized` (fixes build with rust 1.4)
-
-### 0.3.1
-
-* Fix: bump `winapi` version to fix build
-
-### 0.3.0
-
-* Add transactions support and make serialization transacted
-* Breaking change: use `std::io::{Error,Result}` instead of own `RegError` and `RegResult`

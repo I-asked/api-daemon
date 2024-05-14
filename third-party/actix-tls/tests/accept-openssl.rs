@@ -3,25 +3,27 @@
 #![cfg(all(
     feature = "accept",
     feature = "connect",
-    feature = "rustls",
+    feature = "rustls-0_22",
     feature = "openssl"
 ))]
 
-use std::{convert::TryFrom, io::Write, sync::Arc};
+use std::{io::Write as _, sync::Arc};
 
 use actix_rt::net::TcpStream;
 use actix_server::TestServer;
 use actix_service::ServiceFactoryExt as _;
-use actix_tls::accept::openssl::{Acceptor, TlsStream};
+use actix_tls::{
+    accept::openssl::{Acceptor, TlsStream},
+    connect::rustls_0_22::reexports::ClientConfig,
+};
 use actix_utils::future::ok;
-use tokio_rustls::rustls::{Certificate, ClientConfig, RootCertStore, ServerName};
+use rustls_pki_types_1::ServerName;
+use tokio_rustls_025::rustls::RootCertStore;
 
 fn new_cert_and_key() -> (String, String) {
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "127.0.0.1".to_owned(),
-        "localhost".to_owned(),
-    ])
-    .unwrap();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_owned(), "localhost".to_owned()])
+            .unwrap();
 
     let key = cert.serialize_private_key_pem();
     let cert = cert.serialize_pem().unwrap();
@@ -47,30 +49,48 @@ fn openssl_acceptor(cert: String, key: String) -> tls_openssl::ssl::SslAcceptor 
     builder.build()
 }
 
-#[allow(dead_code)]
 mod danger {
-    use std::time::SystemTime;
+    use rustls_pki_types_1::{CertificateDer, ServerName, UnixTime};
+    use tokio_rustls_025::rustls;
 
-    use super::*;
-
-    use tokio_rustls::rustls::{
-        self,
-        client::{ServerCertVerified, ServerCertVerifier},
-    };
-
+    /// Disables certificate verification to allow self-signed certs from rcgen.
+    #[derive(Debug)]
     pub struct NoCertificateVerification;
 
-    impl ServerCertVerifier for NoCertificateVerification {
+    impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         fn verify_server_cert(
             &self,
-            _end_entity: &Certificate,
-            _intermediates: &[Certificate],
-            _server_name: &ServerName,
-            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
             _ocsp_response: &[u8],
-            _now: SystemTime,
-        ) -> Result<ServerCertVerified, rustls::Error> {
-            Ok(ServerCertVerified::assertion())
+            _now: UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types_1::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls_pki_types_1::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
         }
     }
 }
@@ -78,7 +98,6 @@ mod danger {
 #[allow(dead_code)]
 fn rustls_connector(_cert: String, _key: String) -> ClientConfig {
     let mut config = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(RootCertStore::empty())
         .with_no_client_auth();
 
@@ -118,13 +137,13 @@ async fn accepts_connections() {
     let config = rustls_connector(cert, key);
     let config = Arc::new(config);
 
-    let mut conn = tokio_rustls::rustls::ClientConnection::new(
+    let mut conn = tokio_rustls_025::rustls::ClientConnection::new(
         config,
         ServerName::try_from("localhost").unwrap(),
     )
     .unwrap();
 
-    let mut stream = tokio_rustls::rustls::Stream::new(&mut conn, &mut sock);
+    let mut stream = tokio_rustls_025::rustls::Stream::new(&mut conn, &mut sock);
 
     stream.flush().expect("TLS handshake failed");
 }

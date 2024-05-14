@@ -26,7 +26,7 @@ macro_rules! future {
         static WAKER: AtomicWaker = AtomicWaker::new();
 
         let ($name, $get_waker) = {
-            struct Fut(Cell<bool>, Box<i32>);
+            struct Fut(Cell<bool>, #[allow(dead_code)] Box<i32>);
 
             impl Future for Fut {
                 type Output = Box<i32>;
@@ -73,7 +73,7 @@ macro_rules! schedule {
         let ($name, $chan) = {
             let (s, r) = flume::unbounded();
 
-            struct Guard(Box<i32>);
+            struct Guard(#[allow(dead_code)] Box<i32>);
 
             impl Drop for Guard {
                 fn drop(&mut self) {
@@ -175,6 +175,7 @@ fn wake_by_ref() {
     assert_eq!(chan.len(), 0);
 }
 
+#[allow(clippy::redundant_clone)] // This is intentional
 #[test]
 fn clone() {
     future!(f, get_waker, POLL, DROP_F);

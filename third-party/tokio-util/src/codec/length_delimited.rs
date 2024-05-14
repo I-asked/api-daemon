@@ -84,7 +84,7 @@
 //! # fn bind_read<T: AsyncRead>(io: T) {
 //! LengthDelimitedCodec::builder()
 //!     .length_field_offset(0) // default value
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .length_adjustment(0)   // default value
 //!     .num_skip(0) // Do not strip frame header
 //!     .new_read(io);
@@ -118,7 +118,7 @@
 //! # fn bind_read<T: AsyncRead>(io: T) {
 //! LengthDelimitedCodec::builder()
 //!     .length_field_offset(0) // default value
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .length_adjustment(0)   // default value
 //!     // `num_skip` is not needed, the default is to skip
 //!     .new_read(io);
@@ -150,7 +150,7 @@
 //! # fn bind_read<T: AsyncRead>(io: T) {
 //! LengthDelimitedCodec::builder()
 //!     .length_field_offset(0) // default value
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .length_adjustment(-2)  // size of head
 //!     .num_skip(0)
 //!     .new_read(io);
@@ -228,7 +228,7 @@
 //! # fn bind_read<T: AsyncRead>(io: T) {
 //! LengthDelimitedCodec::builder()
 //!     .length_field_offset(1) // length of hdr1
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .length_adjustment(1)  // length of hdr2
 //!     .num_skip(3) // length of hdr1 + LEN
 //!     .new_read(io);
@@ -274,7 +274,7 @@
 //! # fn bind_read<T: AsyncRead>(io: T) {
 //! LengthDelimitedCodec::builder()
 //!     .length_field_offset(1) // length of hdr1
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .length_adjustment(-3)  // length of hdr1 + LEN, negative
 //!     .num_skip(3)
 //!     .new_read(io);
@@ -350,7 +350,7 @@
 //! # fn write_frame<T: AsyncWrite>(io: T) {
 //! # let _ =
 //! LengthDelimitedCodec::builder()
-//!     .length_field_length(2)
+//!     .length_field_type::<u16>()
 //!     .new_write(io);
 //! # }
 //! # pub fn main() {}
@@ -379,13 +379,17 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::error::Error as StdError;
 use std::io::{self, Cursor};
-use std::{cmp, fmt};
+use std::{cmp, fmt, mem};
 
 /// Configure length delimited `LengthDelimitedCodec`s.
 ///
 /// `Builder` enables constructing configured length delimited codecs. Note
 /// that not all configuration settings apply to both encoding and decoding. See
 /// the documentation for specific methods for more detail.
+///
+/// Note that the if the value of [`Builder::max_frame_length`] becomes larger than
+/// what can actually fit in [`Builder::length_field_length`], it will be clipped to
+/// the maximum value that can fit.
 #[derive(Debug, Clone, Copy)]
 pub struct Builder {
     // Maximum frame length
@@ -522,15 +526,11 @@ impl LengthDelimitedCodec {
             }
         };
 
-        let num_skip = self.builder.get_num_skip();
-
-        if num_skip > 0 {
-            src.advance(num_skip);
-        }
+        src.advance(self.builder.get_num_skip());
 
         // Ensure that the buffer has enough space to read the incoming
         // payload
-        src.reserve(n);
+        src.reserve(n.saturating_sub(src.len()));
 
         Ok(Some(n))
     }
@@ -568,7 +568,7 @@ impl Decoder for LengthDelimitedCodec {
                 self.state = DecodeState::Head;
 
                 // Make sure the buffer has enough space to read the next head
-                src.reserve(self.builder.num_head_bytes());
+                src.reserve(self.builder.num_head_bytes().saturating_sub(src.len()));
 
                 Ok(Some(data))
             }
@@ -629,6 +629,24 @@ impl Default for LengthDelimitedCodec {
 
 // ===== impl Builder =====
 
+mod builder {
+    /// Types that can be used with `Builder::length_field_type`.
+    pub trait LengthFieldType {}
+
+    impl LengthFieldType for u8 {}
+    impl LengthFieldType for u16 {}
+    impl LengthFieldType for u32 {}
+    impl LengthFieldType for u64 {}
+
+    #[cfg(any(
+        target_pointer_width = "8",
+        target_pointer_width = "16",
+        target_pointer_width = "32",
+        target_pointer_width = "64",
+    ))]
+    impl LengthFieldType for usize {}
+}
+
 impl Builder {
     /// Creates a new length delimited codec builder with default configuration
     /// values.
@@ -642,7 +660,7 @@ impl Builder {
     /// # fn bind_read<T: AsyncRead>(io: T) {
     /// LengthDelimitedCodec::builder()
     ///     .length_field_offset(0)
-    ///     .length_field_length(2)
+    ///     .length_field_type::<u16>()
     ///     .length_adjustment(0)
     ///     .num_skip(0)
     ///     .new_read(io);
@@ -777,6 +795,42 @@ impl Builder {
         self
     }
 
+    /// Sets the unsigned integer type used to represent the length field.
+    ///
+    /// The default type is [`u32`]. The max type is [`u64`] (or [`usize`] on
+    /// 64-bit targets).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::AsyncRead;
+    /// use tokio_util::codec::LengthDelimitedCodec;
+    ///
+    /// # fn bind_read<T: AsyncRead>(io: T) {
+    /// LengthDelimitedCodec::builder()
+    ///     .length_field_type::<u32>()
+    ///     .new_read(io);
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    ///
+    /// Unlike [`Builder::length_field_length`], this does not fail at runtime
+    /// and instead produces a compile error:
+    ///
+    /// ```compile_fail
+    /// # use tokio::io::AsyncRead;
+    /// # use tokio_util::codec::LengthDelimitedCodec;
+    /// # fn bind_read<T: AsyncRead>(io: T) {
+    /// LengthDelimitedCodec::builder()
+    ///     .length_field_type::<u128>()
+    ///     .new_read(io);
+    /// # }
+    /// # pub fn main() {}
+    /// ```
+    pub fn length_field_type<T: builder::LengthFieldType>(&mut self) -> &mut Self {
+        self.length_field_length(mem::size_of::<T>())
+    }
+
     /// Sets the number of bytes used to represent the length field
     ///
     /// The default value is `4`. The max value is `8`.
@@ -878,15 +932,19 @@ impl Builder {
     /// # pub fn main() {
     /// LengthDelimitedCodec::builder()
     ///     .length_field_offset(0)
-    ///     .length_field_length(2)
+    ///     .length_field_type::<u16>()
     ///     .length_adjustment(0)
     ///     .num_skip(0)
     ///     .new_codec();
     /// # }
     /// ```
     pub fn new_codec(&self) -> LengthDelimitedCodec {
+        let mut builder = *self;
+
+        builder.adjust_max_frame_len();
+
         LengthDelimitedCodec {
-            builder: *self,
+            builder,
             state: DecodeState::Head,
         }
     }
@@ -902,7 +960,7 @@ impl Builder {
     /// # fn bind_read<T: AsyncRead>(io: T) {
     /// LengthDelimitedCodec::builder()
     ///     .length_field_offset(0)
-    ///     .length_field_length(2)
+    ///     .length_field_type::<u16>()
     ///     .length_adjustment(0)
     ///     .num_skip(0)
     ///     .new_read(io);
@@ -925,7 +983,7 @@ impl Builder {
     /// # use tokio_util::codec::LengthDelimitedCodec;
     /// # fn write_frame<T: AsyncWrite>(io: T) {
     /// LengthDelimitedCodec::builder()
-    ///     .length_field_length(2)
+    ///     .length_field_type::<u16>()
     ///     .new_write(io);
     /// # }
     /// # pub fn main() {}
@@ -947,7 +1005,7 @@ impl Builder {
     /// # fn write_frame<T: AsyncRead + AsyncWrite>(io: T) {
     /// # let _ =
     /// LengthDelimitedCodec::builder()
-    ///     .length_field_length(2)
+    ///     .length_field_type::<u16>()
     ///     .new_framed(io);
     /// # }
     /// # pub fn main() {}
@@ -967,6 +1025,35 @@ impl Builder {
     fn get_num_skip(&self) -> usize {
         self.num_skip
             .unwrap_or(self.length_field_offset + self.length_field_len)
+    }
+
+    fn adjust_max_frame_len(&mut self) {
+        // This function is basically `std::u64::saturating_add_signed`. Since it
+        // requires MSRV 1.66, its implementation is copied here.
+        //
+        // TODO: use the method from std when MSRV becomes >= 1.66
+        fn saturating_add_signed(num: u64, rhs: i64) -> u64 {
+            let (res, overflow) = num.overflowing_add(rhs as u64);
+            if overflow == (rhs < 0) {
+                res
+            } else if overflow {
+                u64::MAX
+            } else {
+                0
+            }
+        }
+
+        // Calculate the maximum number that can be represented using `length_field_len` bytes.
+        let max_number = match 1u64.checked_shl((8 * self.length_field_len) as u32) {
+            Some(shl) => shl - 1,
+            None => u64::MAX,
+        };
+
+        let max_allowed_len = saturating_add_signed(max_number, self.length_adjustment as i64);
+
+        if self.max_frame_len as u64 > max_allowed_len {
+            self.max_frame_len = usize::try_from(max_allowed_len).unwrap_or(usize::MAX);
+        }
     }
 }
 

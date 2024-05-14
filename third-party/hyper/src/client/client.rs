@@ -1,6 +1,10 @@
 use std::error::Error as StdError;
 use std::fmt;
+use std::future::Future;
+use std::marker::Unpin;
 use std::mem;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures_channel::oneshot;
@@ -10,6 +14,13 @@ use http::uri::{Port, Scheme};
 use http::{Method, Request, Response, Uri, Version};
 use tracing::{debug, trace, warn};
 
+use crate::body::{Body, HttpBody};
+use crate::client::connect::CaptureConnectionExtension;
+use crate::common::{exec::BoxSendFuture, lazy as hyper_lazy, sync_wrapper::SyncWrapper, Lazy};
+#[cfg(feature = "http2")]
+use crate::ext::Protocol;
+use crate::rt::Executor;
+
 use super::conn;
 use super::connect::{self, sealed::Connect, Alpn, Connected, Connection};
 use super::pool::{
@@ -17,9 +28,6 @@ use super::pool::{
 };
 #[cfg(feature = "tcp")]
 use super::HttpConnector;
-use crate::body::{Body, HttpBody};
-use crate::common::{exec::BoxSendFuture, sync_wrapper::SyncWrapper, lazy as hyper_lazy, task, Future, Lazy, Pin, Poll};
-use crate::rt::Executor;
 
 /// A Client to make outgoing HTTP requests.
 ///
@@ -28,6 +36,7 @@ use crate::rt::Executor;
 #[cfg_attr(docsrs, doc(cfg(any(feature = "http1", feature = "http2"))))]
 pub struct Client<C, B = Body> {
     config: Config,
+    #[cfg_attr(feature = "deprecated", allow(deprecated))]
     conn_builder: conn::Builder,
     connector: C,
     pool: Pool<PoolClient<B>>,
@@ -59,6 +68,7 @@ impl Client<HttpConnector, Body> {
     /// The default connector does **not** handle TLS. Speaking to `https`
     /// destinations will require [configuring a connector that implements
     /// TLS](https://hyper.rs/guides/client/configuration).
+    #[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
     #[inline]
     pub fn new() -> Client<HttpConnector, Body> {
         Builder::default().build_http()
@@ -237,12 +247,15 @@ where
                 })
             }
         };
-
+        req.extensions_mut()
+            .get_mut::<CaptureConnectionExtension>()
+            .map(|conn| conn.set(&pooled.conn_info));
         if pooled.is_http1() {
             if req.version() == Version::HTTP_2 {
                 warn!("Connection is HTTP/1, but request requires HTTP/2");
                 return Err(ClientError::Normal(
-                    crate::Error::new_user_unsupported_version(),
+                    crate::Error::new_user_unsupported_version()
+                        .with_client_connect_info(pooled.conn_info.clone()),
                 ));
             }
 
@@ -269,21 +282,29 @@ where
                 origin_form(req.uri_mut());
             }
         } else if req.method() == Method::CONNECT {
+            #[cfg(not(feature = "http2"))]
             authority_form(req.uri_mut());
+
+            #[cfg(feature = "http2")]
+            if req.extensions().get::<Protocol>().is_none() {
+                authority_form(req.uri_mut());
+            }
         }
 
-        let fut = pooled
-            .send_request_retryable(req)
-            .map_err(ClientError::map_with_reused(pooled.is_reused()));
+        let mut res = match pooled.send_request_retryable(req).await {
+            Err((err, orig_req)) => {
+                return Err(ClientError::map_with_reused(pooled.is_reused())((
+                    err.with_client_connect_info(pooled.conn_info.clone()),
+                    orig_req,
+                )));
+            }
+            Ok(res) => res,
+        };
 
         // If the Connector included 'extra' info, add to Response...
-        let extra_info = pooled.conn_info.extra.clone();
-        let fut = fut.map_ok(move |mut res| {
-            if let Some(extra) = extra_info {
-                extra.set(res.extensions_mut());
-            }
-            res
-        });
+        if let Some(extra) = &pooled.conn_info.extra {
+            extra.set(res.extensions_mut());
+        }
 
         // As of futures@0.1.21, there is a race condition in the mpsc
         // channel, such that sending when the receiver is closing can
@@ -293,10 +314,8 @@ where
         // To counteract this, we must check if our senders 'want' channel
         // has been closed after having tried to send. If so, error out...
         if pooled.is_closed() {
-            return fut.await;
+            return Ok(res);
         }
-
-        let mut res = fut.await?;
 
         // If pooled is HTTP/2, we can toss this reference immediately.
         //
@@ -319,12 +338,14 @@ where
                 drop(delayed_tx);
             });
 
+            #[cfg_attr(feature = "deprecated", allow(deprecated))]
             self.conn_builder.exec.execute(on_idle);
         } else {
             // There's no body to delay, but the connection isn't
             // ready yet. Only re-insert when it's ready
             let on_idle = future::poll_fn(move |cx| pooled.poll_ready(cx)).map(|_| ());
 
+            #[cfg_attr(feature = "deprecated", allow(deprecated))]
             self.conn_builder.exec.execute(on_idle);
         }
 
@@ -378,6 +399,7 @@ where
                         });
                     // An execute error here isn't important, we're just trying
                     // to prevent a waste of a socket...
+                    #[cfg_attr(feature = "deprecated", allow(deprecated))]
                     self.conn_builder.exec.execute(bg);
                 }
                 Ok(checked_out)
@@ -422,6 +444,7 @@ where
         &self,
         pool_key: PoolKey,
     ) -> impl Lazy<Output = crate::Result<Pooled<PoolClient<B>>>> + Unpin {
+        #[cfg_attr(feature = "deprecated", allow(deprecated))]
         let executor = self.conn_builder.exec.clone();
         let pool = self.pool.clone();
         #[cfg(not(feature = "http2"))]
@@ -531,7 +554,7 @@ where
     type Error = crate::Error;
     type Future = ResponseFuture;
 
-    fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
@@ -551,7 +574,7 @@ where
     type Error = crate::Error;
     type Future = ResponseFuture;
 
-    fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
     }
 
@@ -585,7 +608,7 @@ impl ResponseFuture {
         F: Future<Output = crate::Result<Response<Body>>> + Send + 'static,
     {
         Self {
-            inner: SyncWrapper::new(Box::pin(value))
+            inner: SyncWrapper::new(Box::pin(value)),
         }
     }
 
@@ -606,7 +629,7 @@ impl fmt::Debug for ResponseFuture {
 impl Future for ResponseFuture {
     type Output = crate::Result<Response<Body>>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.inner.get_mut().as_mut().poll(cx)
     }
 }
@@ -621,13 +644,14 @@ struct PoolClient<B> {
 }
 
 enum PoolTx<B> {
+    #[cfg_attr(feature = "deprecated", allow(deprecated))]
     Http1(conn::SendRequest<B>),
     #[cfg(feature = "http2")]
     Http2(conn::Http2SendRequest<B>),
 }
 
 impl<B> PoolClient<B> {
-    fn poll_ready(&mut self, cx: &mut task::Context<'_>) -> Poll<crate::Result<()>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
         match self.tx {
             PoolTx::Http1(ref mut tx) => tx.poll_ready(cx),
             #[cfg(feature = "http2")]
@@ -688,6 +712,13 @@ where
     B: Send + 'static,
 {
     fn is_open(&self) -> bool {
+        if self.conn_info.poisoned.poisoned() {
+            trace!(
+                "marking {:?} as closed because it was poisoned",
+                self.conn_info
+            );
+            return false;
+        }
         match self.tx {
             PoolTx::Http1(ref tx) => tx.is_ready(),
             #[cfg(feature = "http2")]
@@ -893,6 +924,7 @@ fn is_schema_secure(uri: &Uri) -> bool {
 #[derive(Clone)]
 pub struct Builder {
     client_config: Config,
+    #[cfg_attr(feature = "deprecated", allow(deprecated))]
     conn_builder: conn::Builder,
     pool_config: pool::Config,
 }
@@ -905,6 +937,7 @@ impl Default for Builder {
                 set_host: true,
                 ver: Ver::Auto,
             },
+            #[cfg_attr(feature = "deprecated", allow(deprecated))]
             conn_builder: conn::Builder::new(),
             pool_config: pool::Config {
                 idle_timeout: Some(Duration::from_secs(90)),
@@ -1059,6 +1092,36 @@ impl Builder {
     pub fn http1_allow_obsolete_multiline_headers_in_responses(&mut self, val: bool) -> &mut Self {
         self.conn_builder
             .http1_allow_obsolete_multiline_headers_in_responses(val);
+        self
+    }
+
+    /// Sets whether invalid header lines should be silently ignored in HTTP/1 responses.
+    ///
+    /// This mimicks the behaviour of major browsers. You probably don't want this.
+    /// You should only want this if you are implementing a proxy whose main
+    /// purpose is to sit in front of browsers whose users access arbitrary content
+    /// which may be malformed, and they expect everything that works without
+    /// the proxy to keep working with the proxy.
+    ///
+    /// This option will prevent Hyper's client from returning an error encountered
+    /// when parsing a header, except if the error was caused by the character NUL
+    /// (ASCII code 0), as Chrome specifically always reject those.
+    ///
+    /// The ignorable errors are:
+    /// * empty header names;
+    /// * characters that are not allowed in header names, except for `\0` and `\r`;
+    /// * when `allow_spaces_after_header_name_in_responses` is not enabled,
+    ///   spaces and tabs between the header name and the colon;
+    /// * missing colon between header name and colon;
+    /// * characters that are not allowed in header values except for `\0` and `\r`.
+    ///
+    /// If an ignorable error is encountered, the parser tries to find the next
+    /// line in the input to resume parsing the rest of the headers. An error
+    /// will be emitted nonetheless if it finds `\0` or a lone `\r` while
+    /// looking for the next line.
+    pub fn http1_ignore_invalid_headers_in_responses(&mut self, val: bool) -> &mut Builder {
+        self.conn_builder
+            .http1_ignore_invalid_headers_in_responses(val);
         self
     }
 
@@ -1336,6 +1399,7 @@ impl Builder {
         B: HttpBody + Send,
         B::Data: Send,
     {
+        #[cfg_attr(feature = "deprecated", allow(deprecated))]
         Client {
             config: self.client_config,
             conn_builder: self.conn_builder.clone(),

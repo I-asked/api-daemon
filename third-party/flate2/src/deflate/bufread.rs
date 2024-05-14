@@ -2,19 +2,15 @@ use std::io;
 use std::io::prelude::*;
 use std::mem;
 
-#[cfg(feature = "tokio")]
-use futures::Poll;
-#[cfg(feature = "tokio")]
-use tokio_io::{AsyncRead, AsyncWrite};
-
 use crate::zio;
 use crate::{Compress, Decompress};
 
 /// A DEFLATE encoder, or compressor.
 ///
-/// This structure consumes a [`BufRead`] interface, reading uncompressed data
-/// from the underlying reader, and emitting compressed data.
+/// This structure implements a [`Read`] interface. When read from, it reads
+/// uncompressed data from the underlying [`BufRead`] and provides the compressed data.
 ///
+/// [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 /// [`BufRead`]: https://doc.rust-lang.org/std/io/trait.BufRead.html
 ///
 /// # Examples
@@ -116,9 +112,6 @@ impl<R: BufRead> Read for DeflateEncoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncRead + BufRead> AsyncRead for DeflateEncoder<R> {}
-
 impl<W: BufRead + Write> Write for DeflateEncoder<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.get_mut().write(buf)
@@ -129,18 +122,12 @@ impl<W: BufRead + Write> Write for DeflateEncoder<W> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncWrite + BufRead> AsyncWrite for DeflateEncoder<R> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.get_mut().shutdown()
-    }
-}
-
 /// A DEFLATE decoder, or decompressor.
 ///
-/// This structure consumes a [`BufRead`] interface, reading compressed data
-/// from the underlying reader, and emitting uncompressed data.
+/// This structure implements a [`Read`] interface. When read from, it reads
+/// compressed data from the underlying [`BufRead`] and provides the uncompressed data.
 ///
+/// [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 /// [`BufRead`]: https://doc.rust-lang.org/std/io/trait.BufRead.html
 ///
 /// # Examples
@@ -217,7 +204,7 @@ impl<R> DeflateDecoder<R> {
     /// Acquires a mutable reference to the underlying stream
     ///
     /// Note that mutation of the stream may result in surprising results if
-    /// this encoder is continued to be used.
+    /// this decoder is continued to be used.
     pub fn get_mut(&mut self) -> &mut R {
         &mut self.obj
     }
@@ -247,9 +234,6 @@ impl<R: BufRead> Read for DeflateDecoder<R> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncRead + BufRead> AsyncRead for DeflateDecoder<R> {}
-
 impl<W: BufRead + Write> Write for DeflateDecoder<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.get_mut().write(buf)
@@ -260,9 +244,49 @@ impl<W: BufRead + Write> Write for DeflateDecoder<W> {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl<R: AsyncWrite + BufRead> AsyncWrite for DeflateDecoder<R> {
-    fn shutdown(&mut self) -> Poll<(), io::Error> {
-        self.get_mut().shutdown()
+#[cfg(test)]
+mod test {
+    use crate::bufread::DeflateDecoder;
+    use crate::deflate::write;
+    use crate::Compression;
+    use std::io::{Read, Write};
+
+    // DeflateDecoder consumes one deflate archive and then returns 0 for subsequent reads, allowing any
+    // additional data to be consumed by the caller.
+    #[test]
+    fn decode_extra_data() {
+        let expected = "Hello World";
+
+        let compressed = {
+            let mut e = write::DeflateEncoder::new(Vec::new(), Compression::default());
+            e.write(expected.as_ref()).unwrap();
+            let mut b = e.finish().unwrap();
+            b.push(b'x');
+            b
+        };
+
+        let mut output = Vec::new();
+        let mut decoder = DeflateDecoder::new(compressed.as_slice());
+        let decoded_bytes = decoder.read_to_end(&mut output).unwrap();
+        assert_eq!(decoded_bytes, output.len());
+        let actual = std::str::from_utf8(&output).expect("String parsing error");
+        assert_eq!(
+            actual, expected,
+            "after decompression we obtain the original input"
+        );
+
+        output.clear();
+        assert_eq!(
+            decoder.read(&mut output).unwrap(),
+            0,
+            "subsequent read of decoder returns 0, but inner reader can return additional data"
+        );
+        let mut reader = decoder.into_inner();
+        assert_eq!(
+            reader.read_to_end(&mut output).unwrap(),
+            1,
+            "extra data is accessible in underlying buf-read"
+        );
+        assert_eq!(output, b"x");
     }
 }

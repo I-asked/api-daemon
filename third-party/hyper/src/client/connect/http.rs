@@ -66,6 +66,7 @@ pub struct HttpConnector<R = GaiResolver> {
 #[derive(Clone, Debug)]
 pub struct HttpInfo {
     remote_addr: SocketAddr,
+    local_addr: SocketAddr,
 }
 
 #[derive(Clone)]
@@ -360,8 +361,11 @@ where
 impl Connection for TcpStream {
     fn connected(&self) -> Connected {
         let connected = Connected::new();
-        if let Ok(remote_addr) = self.peer_addr() {
-            connected.extra(HttpInfo { remote_addr })
+        if let (Ok(remote_addr), Ok(local_addr)) = (self.peer_addr(), self.local_addr()) {
+            connected.extra(HttpInfo {
+                remote_addr,
+                local_addr,
+            })
         } else {
             connected
         }
@@ -372,6 +376,11 @@ impl HttpInfo {
     /// Get the remote address of the transport used.
     pub fn remote_addr(&self) -> SocketAddr {
         self.remote_addr
+    }
+
+    /// Get the local address of the transport used.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
 }
 
@@ -515,7 +524,9 @@ struct ConnectingTcpRemote {
 
 impl ConnectingTcpRemote {
     fn new(addrs: dns::SocketAddrs, connect_timeout: Option<Duration>) -> Self {
-        let connect_timeout = connect_timeout.map(|t| t / (addrs.len() as u32));
+        let connect_timeout = connect_timeout
+            .map(|t| t.checked_div(addrs.len() as u32))
+            .flatten();
 
         Self {
             addrs,

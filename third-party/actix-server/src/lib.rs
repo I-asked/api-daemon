@@ -18,14 +18,15 @@ mod test_server;
 mod waker_queue;
 mod worker;
 
-pub use self::builder::ServerBuilder;
-pub use self::handle::ServerHandle;
-pub use self::server::Server;
-pub use self::service::ServerServiceFactory;
-pub use self::test_server::TestServer;
-
 #[doc(hidden)]
 pub use self::socket::FromStream;
+pub use self::{
+    builder::{MpTcp, ServerBuilder},
+    handle::ServerHandle,
+    server::Server,
+    service::ServerServiceFactory,
+    test_server::TestServer,
+};
 
 /// Start server building process
 #[doc(hidden)]

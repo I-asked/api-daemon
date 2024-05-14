@@ -3,6 +3,13 @@
 Welcome! If you are reading this document, it means you are interested in contributing
 to the `libc` crate.
 
+## v0.2 changes
+
+If you want to add your changes to v0.2, please submit them to the `libc-0.2` branch.
+If you want to add any breaking changes, it should be submitted to the main branch,
+which has changes for v0.3.
+We will support and make a new release for v0.2 until we make the first release of v0.3.
+
 ## Adding an API
 
 Want to use an API which currently isn't bound in `libc`? It's quite easy to add
@@ -54,7 +61,7 @@ We have two automated tests running on [GitHub Actions](https://github.com/rust-
   - `cd libc-test && cargo test`
   - Use the `skip_*()` functions in `build.rs` if you really need a workaround.
 2. Style checker
-  - `rustc ci/style.rs && ./style src`
+  - [`sh ci/style.sh`](https://github.com/rust-lang/libc/blob/main/ci/style.sh)
 
 ## Breaking change policy
 
@@ -72,6 +79,10 @@ after a certain period. The steps are:
     If you're using it, please comment on #XXX").
 2. If we don't see any concerns for a while, do the change actually.
 
+## Supported target policy
+
+When Rust removes a support for a target, the libc crate also may remove the support anytime.
+
 ## Releasing your change to crates.io
 
 Now that you've done the amazing job of landing your new API or your new
@@ -82,7 +93,7 @@ it. If you'd like to get a release out ASAP you can follow these steps:
 1. Increment the patch version number in `Cargo.toml` and `libc-test/Cargo.toml`.
 1. Send a PR to this repository. It should [look like this][example-pr], but it'd
    also be nice to fill out the description with a small rationale for the
-   release (any rationale is ok though!)
+   release (any rationale is ok though!).
 1. Once merged, the release will be tagged and published by one of the libc crate
    maintainers.
 

@@ -13,7 +13,8 @@ use crate::error::PayloadError;
 /// A boxed payload stream.
 pub type BoxedPayloadStream = Pin<Box<dyn Stream<Item = Result<Bytes, PayloadError>>>>;
 
-#[deprecated(since = "4.0.0", note = "Renamed to `BoxedPayloadStream`.")]
+#[doc(hidden)]
+#[deprecated(since = "3.0.0", note = "Renamed to `BoxedPayloadStream`.")]
 pub type PayloadStream = BoxedPayloadStream;
 
 #[cfg(not(feature = "http2"))]
@@ -96,12 +97,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{RefUnwindSafe, UnwindSafe};
-
     use static_assertions::{assert_impl_all, assert_not_impl_any};
 
     use super::*;
 
     assert_impl_all!(Payload: Unpin);
-    assert_not_impl_any!(Payload: Send, Sync, UnwindSafe, RefUnwindSafe);
+    assert_not_impl_any!(Payload: Send, Sync);
 }

@@ -3,7 +3,7 @@ use std::{collections::HashSet, rc::Rc};
 use actix_utils::future::ok;
 use actix_web::{
     body::{EitherBody, MessageBody},
-    dev::{Service, ServiceRequest, ServiceResponse},
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse},
     http::{
         header::{self, HeaderValue},
         Method,
@@ -13,7 +13,11 @@ use actix_web::{
 use futures_util::future::{FutureExt as _, LocalBoxFuture};
 use log::debug;
 
-use crate::{builder::intersperse_header_values, inner::add_vary_header, AllOrSome, Inner};
+use crate::{
+    builder::intersperse_header_values,
+    inner::{add_vary_header, header_value_try_into_method},
+    AllOrSome, CorsError, Inner,
+};
 
 /// Service wrapper for Cross-Origin Resource Sharing support.
 ///
@@ -27,10 +31,43 @@ pub struct CorsMiddleware<S> {
 }
 
 impl<S> CorsMiddleware<S> {
-    fn handle_preflight(inner: &Inner, req: ServiceRequest) -> ServiceResponse {
+    /// Returns true if request is `OPTIONS` and contains an `Access-Control-Request-Method` header.
+    fn is_request_preflight(req: &ServiceRequest) -> bool {
+        // check request method is OPTIONS
+        if req.method() != Method::OPTIONS {
+            return false;
+        }
+
+        // check follow-up request method is present and valid
+        if req
+            .headers()
+            .get(header::ACCESS_CONTROL_REQUEST_METHOD)
+            .and_then(header_value_try_into_method)
+            .is_none()
+        {
+            return false;
+        }
+
+        true
+    }
+
+    /// Validates preflight request headers against configuration and constructs preflight response.
+    ///
+    /// Checks:
+    /// - `Origin` header is acceptable;
+    /// - `Access-Control-Request-Method` header is acceptable;
+    /// - `Access-Control-Request-Headers` header is acceptable.
+    fn handle_preflight(&self, req: ServiceRequest) -> ServiceResponse {
+        let inner = Rc::clone(&self.inner);
+
+        match inner.validate_origin(req.head()) {
+            Ok(true) => {}
+            Ok(false) => return req.error_response(CorsError::OriginNotAllowed),
+            Err(err) => return req.error_response(err),
+        };
+
         if let Err(err) = inner
-            .validate_origin(req.head())
-            .and_then(|_| inner.validate_allowed_method(req.head()))
+            .validate_allowed_method(req.head())
             .and_then(|_| inner.validate_allowed_headers(req.head()))
         {
             return req.error_response(err);
@@ -56,6 +93,18 @@ impl<S> CorsMiddleware<S> {
             res.insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, headers.clone()));
         }
 
+        #[cfg(feature = "draft-private-network-access")]
+        if inner.allow_private_network_access
+            && req
+                .headers()
+                .contains_key("access-control-request-private-network")
+        {
+            res.insert_header((
+                header::HeaderName::from_static("access-control-allow-private-network"),
+                HeaderValue::from_static("true"),
+            ));
+        }
+
         if inner.supports_credentials {
             res.insert_header((
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -68,16 +117,25 @@ impl<S> CorsMiddleware<S> {
         }
 
         let mut res = res.finish();
-        add_vary_header(res.headers_mut());
+
+        if inner.vary_header {
+            add_vary_header(res.headers_mut());
+        }
 
         req.into_response(res)
     }
 
-    fn augment_response<B>(inner: &Inner, mut res: ServiceResponse<B>) -> ServiceResponse<B> {
-        if let Some(origin) = inner.access_control_allow_origin(res.request().head()) {
-            res.headers_mut()
-                .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-        };
+    fn augment_response<B>(
+        inner: &Inner,
+        origin_allowed: bool,
+        mut res: ServiceResponse<B>,
+    ) -> ServiceResponse<B> {
+        if origin_allowed {
+            if let Some(origin) = inner.access_control_allow_origin(res.request().head()) {
+                res.headers_mut()
+                    .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+            };
+        }
 
         if let Some(ref expose) = inner.expose_headers_baked {
             log::trace!("exposing selected headers: {:?}", expose);
@@ -86,13 +144,11 @@ impl<S> CorsMiddleware<S> {
                 .insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, expose.clone());
         } else if matches!(inner.expose_headers, AllOrSome::All) {
             // intersperse_header_values requires that argument is non-empty
-            if !res.request().headers().is_empty() {
+            if !res.headers().is_empty() {
                 // extract header names from request
                 let expose_all_request_headers = res
-                    .request()
                     .headers()
                     .keys()
-                    .into_iter()
                     .map(|name| name.as_str())
                     .collect::<HashSet<_>>();
 
@@ -117,6 +173,19 @@ impl<S> CorsMiddleware<S> {
             );
         }
 
+        #[cfg(feature = "draft-private-network-access")]
+        if inner.allow_private_network_access
+            && res
+                .request()
+                .headers()
+                .contains_key("access-control-request-private-network")
+        {
+            res.headers_mut().insert(
+                header::HeaderName::from_static("access-control-allow-private-network"),
+                HeaderValue::from_static("true"),
+            );
+        }
+
         if inner.vary_header {
             add_vary_header(res.headers_mut());
         }
@@ -136,34 +205,40 @@ where
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<ServiceResponse<EitherBody<B>>, Error>>;
 
-    actix_service::forward_ready!(service);
+    forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        if self.inner.preflight && req.method() == Method::OPTIONS {
-            let inner = Rc::clone(&self.inner);
-            let res = Self::handle_preflight(&inner, req);
-            ok(res.map_into_right_body()).boxed_local()
-        } else {
-            let origin = req.headers().get(header::ORIGIN).cloned();
+        let origin = req.headers().get(header::ORIGIN);
 
-            if origin.is_some() {
-                // Only check requests with a origin header.
-                if let Err(err) = self.inner.validate_origin(req.head()) {
-                    debug!("origin validation failed; inner service is not called");
-                    return ok(req.error_response(err).map_into_right_body()).boxed_local();
-                }
-            }
-
-            let inner = Rc::clone(&self.inner);
-            let fut = self.service.call(req);
-
-            async move {
-                let res = fut.await;
-
-                Ok(Self::augment_response(&inner, res?).map_into_left_body())
-            }
-            .boxed_local()
+        // handle preflight requests
+        if self.inner.preflight && Self::is_request_preflight(&req) {
+            let res = self.handle_preflight(req);
+            return ok(res.map_into_right_body()).boxed_local();
         }
+
+        // only check actual requests with a origin header
+        let origin_allowed = match (origin, self.inner.validate_origin(req.head())) {
+            (None, _) => false,
+            (_, Ok(origin_allowed)) => origin_allowed,
+            (_, Err(err)) => {
+                debug!("origin validation failed; inner service is not called");
+                let mut res = req.error_response(err);
+
+                if self.inner.vary_header {
+                    add_vary_header(res.headers_mut());
+                }
+
+                return ok(res.map_into_right_body()).boxed_local();
+            }
+        };
+
+        let inner = Rc::clone(&self.inner);
+        let fut = self.service.call(req);
+
+        Box::pin(async move {
+            let res = fut.await;
+            Ok(Self::augment_response(&inner, origin_allowed, res?).map_into_left_body())
+        })
     }
 }
 
@@ -193,7 +268,6 @@ mod tests {
             .allow_any_origin()
             .allowed_origin_fn(|origin, req_head| {
                 assert_eq!(&origin, req_head.headers.get(header::ORIGIN).unwrap());
-
                 req_head.headers().contains_key(header::DNT)
             })
             .new_transform(test::ok_service())

@@ -1,8 +1,13 @@
-use std::future::Future;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use core::fmt;
+use core::mem;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::task::Poll;
 
-use event_listener::Event;
+use alloc::sync::Arc;
+
+use event_listener::{Event, EventListener};
+use event_listener_strategy::{easy_wrapper, EventListenerFuture, Strategy};
 
 /// A counter for limiting the number of concurrent operations.
 #[derive(Debug)]
@@ -80,23 +85,40 @@ impl Semaphore {
     /// let guard = s.acquire().await;
     /// # });
     /// ```
-    pub async fn acquire(&self) -> SemaphoreGuard<'_> {
-        let mut listener = None;
-
-        loop {
-            if let Some(guard) = self.try_acquire() {
-                return guard;
-            }
-
-            match listener.take() {
-                None => listener = Some(self.event.listen()),
-                Some(l) => l.await,
-            }
-        }
+    pub fn acquire(&self) -> Acquire<'_> {
+        Acquire::_new(AcquireInner {
+            semaphore: self,
+            listener: EventListener::new(),
+        })
     }
-}
 
-impl Semaphore {
+    /// Waits for a permit for a concurrent operation.
+    ///
+    /// Returns a guard that releases the permit when dropped.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`acquire`][Semaphore::acquire] method,
+    /// this method will block the current thread until the permit is acquired.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended to be
+    /// used in a way that a semaphore can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in a deadlock.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_lock::Semaphore;
+    ///
+    /// let s = Semaphore::new(2);
+    /// let guard = s.acquire_blocking();
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    #[inline]
+    pub fn acquire_blocking(&self) -> SemaphoreGuard<'_> {
+        self.acquire().wait()
+    }
+
     /// Attempts to get an owned permit for a concurrent operation.
     ///
     /// If the permit could not be acquired at this time, then [`None`] is returned. Otherwise, an
@@ -130,23 +152,8 @@ impl Semaphore {
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
-                Ok(_) => return Some(SemaphoreGuardArc(self.clone())),
+                Ok(_) => return Some(SemaphoreGuardArc(Some(self.clone()))),
                 Err(c) => count = c,
-            }
-        }
-    }
-
-    async fn acquire_arc_impl(self: Arc<Self>) -> SemaphoreGuardArc {
-        let mut listener = None;
-
-        loop {
-            if let Some(guard) = self.try_acquire_arc() {
-                return guard;
-            }
-
-            match listener.take() {
-                None => listener = Some(self.event.listen()),
-                Some(l) => l.await,
             }
         }
     }
@@ -166,14 +173,178 @@ impl Semaphore {
     /// let guard = s.acquire_arc().await;
     /// # });
     /// ```
-    pub fn acquire_arc(self: &Arc<Self>) -> impl Future<Output = SemaphoreGuardArc> {
-        self.clone().acquire_arc_impl()
+    pub fn acquire_arc(self: &Arc<Self>) -> AcquireArc {
+        AcquireArc::_new(AcquireArcInner {
+            semaphore: self.clone(),
+            listener: EventListener::new(),
+        })
+    }
+
+    /// Waits for an owned permit for a concurrent operation.
+    ///
+    /// Returns a guard that releases the permit when dropped.
+    ///
+    /// # Blocking
+    ///
+    /// Rather than using asynchronous waiting, like the [`acquire_arc`][Semaphore::acquire_arc] method,
+    /// this method will block the current thread until the permit is acquired.
+    ///
+    /// This method should not be used in an asynchronous context. It is intended to be
+    /// used in a way that a semaphore can be used in both asynchronous and synchronous contexts.
+    /// Calling this method in an asynchronous context may result in a deadlock.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use async_lock::Semaphore;
+    ///
+    /// let s = Arc::new(Semaphore::new(2));
+    /// let guard = s.acquire_arc_blocking();
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    #[inline]
+    pub fn acquire_arc_blocking(self: &Arc<Self>) -> SemaphoreGuardArc {
+        self.acquire_arc().wait()
+    }
+
+    /// Adds `n` additional permits to the semaphore.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use async_lock::Semaphore;
+    ///
+    /// # futures_lite::future::block_on(async {
+    /// let s = Semaphore::new(1);
+    ///
+    /// let _guard = s.acquire().await;
+    /// assert!(s.try_acquire().is_none());
+    ///
+    /// s.add_permits(2);
+    ///
+    /// let _guard = s.acquire().await;
+    /// let _guard = s.acquire().await;
+    /// # });
+    /// ```
+    pub fn add_permits(&self, n: usize) {
+        self.count.fetch_add(n, Ordering::AcqRel);
+        self.event.notify(n);
+    }
+}
+
+easy_wrapper! {
+    /// The future returned by [`Semaphore::acquire`].
+    pub struct Acquire<'a>(AcquireInner<'a> => SemaphoreGuard<'a>);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
+}
+
+pin_project_lite::pin_project! {
+    struct AcquireInner<'a> {
+        // The semaphore being acquired.
+        semaphore: &'a Semaphore,
+
+        // The listener waiting on the semaphore.
+        #[pin]
+        listener: EventListener,
+    }
+}
+
+impl fmt::Debug for Acquire<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Acquire { .. }")
+    }
+}
+
+impl<'a> EventListenerFuture for AcquireInner<'a> {
+    type Output = SemaphoreGuard<'a>;
+
+    fn poll_with_strategy<'x, S: Strategy<'x>>(
+        self: Pin<&mut Self>,
+        strategy: &mut S,
+        cx: &mut S::Context,
+    ) -> Poll<Self::Output> {
+        let mut this = self.project();
+
+        loop {
+            match this.semaphore.try_acquire() {
+                Some(guard) => return Poll::Ready(guard),
+                None => {
+                    // Wait on the listener.
+                    if !this.listener.is_listening() {
+                        this.listener.as_mut().listen(&this.semaphore.event);
+                    } else {
+                        ready!(strategy.poll(this.listener.as_mut(), cx));
+                    }
+                }
+            }
+        }
+    }
+}
+
+easy_wrapper! {
+    /// The future returned by [`Semaphore::acquire_arc`].
+    pub struct AcquireArc(AcquireArcInner => SemaphoreGuardArc);
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    pub(crate) wait();
+}
+
+pin_project_lite::pin_project! {
+    struct AcquireArcInner {
+        // The semaphore being acquired.
+        semaphore: Arc<Semaphore>,
+
+        // The listener waiting on the semaphore.
+        #[pin]
+        listener: EventListener,
+    }
+}
+
+impl fmt::Debug for AcquireArc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("AcquireArc { .. }")
+    }
+}
+
+impl EventListenerFuture for AcquireArcInner {
+    type Output = SemaphoreGuardArc;
+
+    fn poll_with_strategy<'x, S: Strategy<'x>>(
+        self: Pin<&mut Self>,
+        strategy: &mut S,
+        cx: &mut S::Context,
+    ) -> Poll<Self::Output> {
+        let mut this = self.project();
+
+        loop {
+            match this.semaphore.try_acquire_arc() {
+                Some(guard) => return Poll::Ready(guard),
+                None => {
+                    // Wait on the listener.
+                    if !this.listener.is_listening() {
+                        this.listener.as_mut().listen(&this.semaphore.event);
+                    } else {
+                        ready!(strategy.poll(this.listener.as_mut(), cx));
+                    }
+                }
+            }
+        }
     }
 }
 
 /// A guard that releases the acquired permit.
+#[clippy::has_significant_drop]
 #[derive(Debug)]
 pub struct SemaphoreGuard<'a>(&'a Semaphore);
+
+impl SemaphoreGuard<'_> {
+    /// Drops the guard _without_ releasing the acquired permit.
+    #[inline]
+    pub fn forget(self) {
+        mem::forget(self);
+    }
+}
 
 impl Drop for SemaphoreGuard<'_> {
     fn drop(&mut self) {
@@ -183,12 +354,26 @@ impl Drop for SemaphoreGuard<'_> {
 }
 
 /// An owned guard that releases the acquired permit.
+#[clippy::has_significant_drop]
 #[derive(Debug)]
-pub struct SemaphoreGuardArc(Arc<Semaphore>);
+pub struct SemaphoreGuardArc(Option<Arc<Semaphore>>);
+
+impl SemaphoreGuardArc {
+    /// Drops the guard _without_ releasing the acquired permit.
+    /// (Will still decrement the `Arc` reference count.)
+    #[inline]
+    pub fn forget(mut self) {
+        // Drop the inner `Arc` in order to decrement the reference count.
+        // FIXME: get rid of the `Option` once RFC 3466 or equivalent becomes available.
+        drop(self.0.take());
+        mem::forget(self);
+    }
+}
 
 impl Drop for SemaphoreGuardArc {
     fn drop(&mut self) {
-        self.0.count.fetch_add(1, Ordering::AcqRel);
-        self.0.event.notify(1);
+        let opt = self.0.take().unwrap();
+        opt.count.fetch_add(1, Ordering::AcqRel);
+        opt.event.notify(1);
     }
 }

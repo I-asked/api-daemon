@@ -106,3 +106,39 @@ impl fmt::Display for Error {
 /// Requires the `std` feature.
 #[cfg(feature = "std")]
 impl ::std::error::Error for Error {}
+
+/// An error that occurs during certificate validation or name validation.
+///
+/// `ErrorExt` effectively extends `Error` to support reporting new errors. Because `Error` is not
+/// declared `#[non_exhaustive]` it could not be directly extended in a backward-compatible way.
+#[non_exhaustive]
+pub enum ErrorExt {
+    Error(Error),
+    MaximumSignatureChecksExceeded,
+    /// The maximum number of internal path building calls has been reached. Path complexity is too great.
+    MaximumPathBuildCallsExceeded,
+}
+
+impl ErrorExt {
+    pub(crate) fn is_fatal(&self) -> bool {
+        match self {
+            Self::Error(_) => false,
+            Self::MaximumSignatureChecksExceeded | Self::MaximumPathBuildCallsExceeded => true,
+        }
+    }
+
+    pub(crate) fn into_error_lossy(self) -> Error {
+        match self {
+            Self::Error(e) => e,
+            Self::MaximumSignatureChecksExceeded | Self::MaximumPathBuildCallsExceeded => {
+                Error::UnknownIssuer
+            }
+        }
+    }
+}
+
+impl From<Error> for ErrorExt {
+    fn from(error: Error) -> Self {
+        Self::Error(error)
+    }
+}

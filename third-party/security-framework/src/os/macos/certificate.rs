@@ -8,7 +8,6 @@ use core_foundation::dictionary::CFDictionary;
 use core_foundation::error::CFError;
 use core_foundation::string::CFString;
 use security_framework_sys::certificate::*;
-use std::convert::TryInto;
 use std::os::raw::c_void;
 use std::ptr;
 
@@ -120,9 +119,9 @@ pub struct CertificateProperties(CFDictionary);
 
 impl CertificateProperties {
     /// Retrieves a specific property identified by its OID.
-    pub fn get(&self, oid: CertificateOid) -> Option<CertificateProperty> {
+    #[must_use] pub fn get(&self, oid: CertificateOid) -> Option<CertificateProperty> {
         unsafe {
-            self.0.find(oid.as_ptr() as *const c_void).map(|value| {
+            self.0.find(oid.as_ptr().cast::<c_void>()).map(|value| {
                 CertificateProperty(CFDictionary::wrap_under_get_rule(*value as *mut _))
             })
         }
@@ -134,13 +133,15 @@ pub struct CertificateProperty(CFDictionary);
 
 impl CertificateProperty {
     /// Returns the label of this property.
+    #[must_use]
     pub fn label(&self) -> CFString {
         unsafe {
-            CFString::wrap_under_get_rule(*self.0.get(kSecPropertyKeyLabel.to_void()) as *const _)
+            CFString::wrap_under_get_rule((*self.0.get(kSecPropertyKeyLabel.to_void())).cast())
         }
     }
 
     /// Returns an enum of the underlying data for this property.
+    #[must_use]
     pub fn get(&self) -> PropertyType {
         unsafe {
             let type_ =
@@ -149,10 +150,10 @@ impl CertificateProperty {
 
             if type_ == CFString::wrap_under_get_rule(kSecPropertyTypeSection) {
                 PropertyType::Section(PropertySection(CFArray::wrap_under_get_rule(
-                    *value as *const _,
+                    (*value).cast(),
                 )))
             } else if type_ == CFString::wrap_under_get_rule(kSecPropertyTypeString) {
-                PropertyType::String(CFString::wrap_under_get_rule(*value as *const _))
+                PropertyType::String(CFString::wrap_under_get_rule((*value).cast()))
             } else {
                 PropertyType::__Unknown
             }
@@ -168,6 +169,7 @@ pub struct PropertySection(CFArray<CFDictionary>);
 impl PropertySection {
     /// Returns an iterator over the properties in this section.
     #[inline(always)]
+    #[must_use]
     pub fn iter(&self) -> PropertySectionIter<'_> {
         PropertySectionIter(self.0.iter())
     }
@@ -213,7 +215,6 @@ pub enum PropertyType {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::os::macos::certificate_oids::CertificateOid;
     use crate::test::certificate;
     use std::collections::HashMap;
 

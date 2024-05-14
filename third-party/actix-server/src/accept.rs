@@ -1,8 +1,8 @@
 use std::{io, thread, time::Duration};
 
 use actix_rt::time::Instant;
-use log::{debug, error, info};
 use mio::{Interest, Poll, Token as MioToken};
+use tracing::{debug, error, info};
 
 use crate::{
     availability::Availability,
@@ -24,7 +24,7 @@ struct ServerSocketInfo {
     timeout: Option<actix_rt::time::Instant>,
 }
 
-/// poll instance of the server.
+/// Poll instance of the server.
 pub(crate) struct Accept {
     poll: Poll,
     waker_queue: WakerQueue,
@@ -41,7 +41,7 @@ impl Accept {
     pub(crate) fn start(
         sockets: Vec<(usize, MioListener)>,
         builder: &ServerBuilder,
-    ) -> io::Result<(WakerQueue, Vec<WorkerHandleServer>)> {
+    ) -> io::Result<(WakerQueue, Vec<WorkerHandleServer>, thread::JoinHandle<()>)> {
         let handle_server = ServerHandle::new(builder.cmd_tx.clone());
 
         // construct poll instance and its waker
@@ -73,12 +73,12 @@ impl Accept {
             handle_server,
         )?;
 
-        thread::Builder::new()
+        let accept_handle = thread::Builder::new()
             .name("actix-server acceptor".to_owned())
             .spawn(move || accept.poll_with(&mut sockets))
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
-        Ok((waker_queue, handles_server))
+        Ok((waker_queue, handles_server, accept_handle))
     }
 
     fn new_with_sockets(
@@ -127,10 +127,10 @@ impl Accept {
         let mut events = mio::Events::with_capacity(256);
 
         loop {
-            if let Err(e) = self.poll.poll(&mut events, self.timeout) {
-                match e.kind() {
+            if let Err(err) = self.poll.poll(&mut events, self.timeout) {
+                match err.kind() {
                     io::ErrorKind::Interrupted => {}
-                    _ => panic!("Poll error: {}", e),
+                    _ => panic!("Poll error: {}", err),
                 }
             }
 
@@ -140,7 +140,7 @@ impl Accept {
                     WAKER_TOKEN => {
                         let exit = self.handle_waker(sockets);
                         if exit {
-                            info!("Accept thread stopped");
+                            info!("accept thread stopped");
                             return;
                         }
                     }
@@ -161,11 +161,13 @@ impl Accept {
         // a loop that would try to drain the command channel. It's yet unknown
         // if it's necessary/good practice to actively drain the waker queue.
         loop {
-            // take guard with every iteration so no new interest can be added
-            // until the current task is done.
+            // Take guard with every iteration so no new interests can be added until the current
+            // task is done. Take care not to take the guard again inside this loop.
             let mut guard = self.waker_queue.guard();
+
+            #[allow(clippy::significant_drop_in_scrutinee)]
             match guard.pop_front() {
-                // worker notify it becomes available.
+                // Worker notified it became available.
                 Some(WakerInterest::WorkerAvailable(idx)) => {
                     drop(guard);
 
@@ -176,7 +178,7 @@ impl Accept {
                     }
                 }
 
-                // a new worker thread is made and it's handle would be added to Accept
+                // A new worker thread has been created so store its handle.
                 Some(WakerInterest::Worker(handle)) => {
                     drop(guard);
 
@@ -297,16 +299,16 @@ impl Accept {
 
     fn register_logged(&self, info: &mut ServerSocketInfo) {
         match self.register(info) {
-            Ok(_) => debug!("Resume accepting connections on {}", info.lst.local_addr()),
-            Err(e) => error!("Can not register server socket {}", e),
+            Ok(_) => debug!("resume accepting connections on {}", info.lst.local_addr()),
+            Err(err) => error!("can not register server socket {}", err),
         }
     }
 
     fn deregister_logged(&self, info: &mut ServerSocketInfo) {
         match self.poll.registry().deregister(&mut info.lst) {
-            Ok(_) => debug!("Paused accepting connections on {}", info.lst.local_addr()),
-            Err(e) => {
-                error!("Can not deregister server socket {}", e)
+            Ok(_) => debug!("paused accepting connections on {}", info.lst.local_addr()),
+            Err(err) => {
+                error!("can not deregister server socket {}", err)
             }
         }
     }
@@ -350,7 +352,7 @@ impl Accept {
                 self.remove_next();
 
                 if self.handles.is_empty() {
-                    error!("No workers");
+                    error!("no workers");
                     // All workers are gone and Conn is nowhere to be sent.
                     // Treat this situation as Ok and drop Conn.
                     return Ok(());
@@ -396,10 +398,10 @@ impl Accept {
                     let conn = Conn { io, token };
                     self.accept_one(conn);
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return,
-                Err(ref e) if connection_error(e) => continue,
-                Err(e) => {
-                    error!("Error accepting connection: {}", e);
+                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => return,
+                Err(ref err) if connection_error(err) => continue,
+                Err(err) => {
+                    error!("error accepting connection: {}", err);
 
                     // deregister listener temporary
                     self.deregister_logged(info);

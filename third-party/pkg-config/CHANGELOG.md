@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.30] - 2024-02-14
+
+### Changed
+
+- Update documentation for cross-compilation (#161).
+
+- Update GitHub Action CI (#160).
+
+## [0.3.29] - 2024-01-17
+
+### Fixed
+
+- Detection and usage of Windows static libraries (#154).
+
+- Passing `-Wl,-u` to the linker if specified in the pkg-config file (#154).
+
+## [0.3.28] - 2023-12-20
+
+### Fixed
+
+- Pass -l:libfoo.a to linker directly (#149).
+
+### Changed
+
+- Improve error message when library not found (#158).
+
+## [0.3.27] - 2023-05-03
+
+### Added
+
+- Support falling back to `pkgconf` if `pkg-config` is not available (#145).
+
+### Changed
+
+- Simplify running `pkg-config` (#144).
+
+- Document MSRV in `Cargo.toml` via `rust-version`.
+
+- Fix a couple of minor clippy warnings (#147).
+
+## [0.3.26] - 2022-10-26
+
+### Added
+
+- Support for handling full paths to libraries in addition to normal `-l`
+  linker flags (#134).
+
+## [0.3.25] - 2022-03-31
+
+### Added
+
+- Support for parsing `-Wl` linker arguments from the `Libs` lines and
+  passing them to the linker as well as making them available via
+  `Library::ld_args` (#131).
+
+### Changed
+
+- Use SPDX license format and remove obsolete badge info (#129).
+
 ## [0.3.24] - 2021-12-11
 
 ### Fixed

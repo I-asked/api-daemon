@@ -1,3 +1,118 @@
+## v0.11.27
+
+- Add `hickory-dns` feature, deprecating `trust-dns`.
+- (wasm) Fix `Form::text()` to not set octet-stream for plain text fields.
+
+## v0.11.26
+
+- Revert `system-configuration` upgrade, which broke MSRV on macOS.
+
+## v0.11.25
+
+- Fix `Certificate::from_pem_bundle()` parsing.
+- Fix Apple linker errors from detecting system proxies.
+
+## v0.11.24
+
+- Add `Certificate::from_pem_bundle()` to add a bundle.
+- Add `http3_prior_knowledge()` to blocking client builder.
+- Remove `Sync` bounds requirement for `Body::wrap_stream()`.
+- Fix HTTP/2 to retry `REFUSED_STREAM` requests.
+- Fix instances of converting `Url` to `Uri` that could panic.
+
+## v0.11.23
+
+- Add `Proxy::custom_http_auth(val)` for setting the raw `Proxy-Authorization` header when connecting to proxies.
+- Fix redirect to reject locations that are not `http://` or `https://`.
+- Fix setting `nodelay` when TLS is enabled but URL is HTTP.
+- (wasm) Add `ClientBuilder::user_agent(val)`.
+- (wasm) add `multipart::Form::headers(headers)`.
+
+## v0.11.22
+
+- Fix compilation on Windows when `trust-dns` is enabled.
+
+## v0.11.21
+
+- Add automatically detecting macOS proxy settings.
+- Add `ClientBuilder::tls_info(bool)`, which will put `tls::TlsInfo` into the response extensions.
+- Fix trust-dns resolver from possible hangs.
+- Fix connect timeout to be split among multiple IP addresses.
+
+## v0.11.20
+
+- Fix `deflate` decompression back to using zlib, as outlined in the spec.
+
+## v0.11.19
+
+- Add `ClientBuilder::http1_ignore_invalid_headers_in_responses()` option.
+- Add `ClientBuilder::http1_allow_spaces_after_header_name_in_responses()` option.
+- Add support for `ALL_PROXY` environment variable.
+- Add support for `use_preconfigured_tls` when combined with HTTP/3.
+- Fix `deflate` decompression from using the zlib decoder.
+- Fix `Response::{text, text_with_charset}()` to strip BOM characters.
+- Fix a panic when HTTP/3 is used if UDP isn't able to connect.
+- Fix some dependencies for HTTP/3.
+- Increase MSRV to 1.63.
+
+## v0.11.18
+
+- Fix `RequestBuilder::json()` method from overriding a previously set `content-type` header. An existing value will be left in place.
+- Upgrade internal dependencies for rustls and compression.
+
+## v0.11.17
+
+- Upgrade internal dependencies of Experimental HTTP/3 to use quinn v0.9
+- (wasm) Fix blob url support
+
+## v0.11.16
+
+- Chore: set MSRV in `Cargo.toml`.
+- Docs: fix build on docs.rs
+
+## v0.11.15
+
+- Add `RequestBuilder` methods to split and reconstruct from its parts.
+- Add experimental HTTP/3 support.
+- Fix `connection_verbose` to log `write_vectored` calls.
+- (wasm) Make requests actually cancel if the future is dropped.
+
+## v0.11.14
+
+- Adds `Proxy::no_proxy(url)` that works like the NO_PROXY environment variable.
+- Adds `multipart::Part::headers(headers)` method to add custom headers.
+- (wasm) Add `Response::bytes_stream()`.
+- Perf: several internal optimizations reducing copies and memory allocations.
+
+## v0.11.13
+
+- Add `ClientBuilder::dns_resolver()` option for custom DNS resolvers.
+- Add `ClientBuilder::tls_sni(bool)` option to enable or disable TLS Server Name Indication.
+- Add `Identity::from_pkcs8_pem()` constructor when using `native-tls`.
+- Fix `redirect::Policy::limited(0)` from following any redirects.
+
+## v0.11.12
+
+- Add `ClientBuilder::resolve_to_addrs()` which allows a slice of IP addresses to be specified for a single host.
+- Add `Response::upgrade()` to await whether the server agrees to an HTTP upgrade.
+
+## v0.11.11
+
+- Add HTTP/2 keep-alive configuration methods on `ClientBuilder`.
+- Add `ClientBuilder::http1_allow_obsolete_multiline_headers_in_responses()`.
+- Add `impl Service<Request>` for `Client` and `&'_ Client`.
+- (wasm) Add `RequestBuilder::basic_auth()`.
+- Fix `RequestBuilder::header` to not override `sensitive` if user explicitly set on a `HeaderValue`.
+- Fix rustls parsing of elliptic curve private keys.
+- Fix Proxy URL parsing of some invalid targets.
+
+## v0.11.10
+
+- Add `Error::url()` to access the URL of an error.
+- Add `Response::extensions()` to access the `http::Extensions` of a response.
+- Fix `rustls-native-certs` to log an error instead of panicking when loading an invalid system certificate.
+- Fix passing Basic Authorization header to proxies.
+
 ## v0.11.9
 
 - Add `ClientBuilder::http09_responses(bool)` option to allow receiving HTTP/0.9 responses.
@@ -572,7 +687,7 @@
 ### Breaking Changes
 
 - hyper has been upgraded to 0.11, so `header`, `StatusCode`, and `Method` have breaking changes.
-- `mime` has been ugpraded to 0.3, with a very different API.
+- `mime` has been upgraded to 0.3, with a very different API.
 - All configuration methods have been removed from the `Client`, and moved to the `ClientBuilder`.
 - The `HttpVersion` type was completely removed.
 - `Error::cause()` now returns `Error::get_ref().cause()`.

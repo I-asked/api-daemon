@@ -1,15 +1,19 @@
+#[cfg(any(feature = "formatting", feature = "parsing"))]
 mod string;
 
 use std::iter::Peekable;
 use std::str::FromStr;
 
-use proc_macro::{token_stream, Span, TokenStream, TokenTree};
+use num_conv::prelude::*;
+use proc_macro::{token_stream, Span, TokenTree};
+use time_core::util::{days_in_year, is_leap_year};
 
 use crate::Error;
 
-pub(crate) fn get_string_literal(tokens: TokenStream) -> Result<(Span, Vec<u8>), Error> {
-    let mut tokens = tokens.into_iter();
-
+#[cfg(any(feature = "formatting", feature = "parsing"))]
+pub(crate) fn get_string_literal(
+    mut tokens: impl Iterator<Item = TokenTree>,
+) -> Result<(Span, Vec<u8>), Error> {
     match (tokens.next(), tokens.next()) {
         (Some(TokenTree::Literal(literal)), None) => string::parse(&literal),
         (Some(tree), None) => Err(Error::ExpectedString {
@@ -76,10 +80,6 @@ pub(crate) fn consume_punct(
     }
 }
 
-fn is_leap_year(year: i32) -> bool {
-    (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
-}
-
 fn jan_weekday(year: i32, ordinal: i32) -> u8 {
     macro_rules! div_floor {
         ($a:expr, $b:expr) => {{
@@ -93,23 +93,17 @@ fn jan_weekday(year: i32, ordinal: i32) -> u8 {
     }
 
     let adj_year = year - 1;
-    ((ordinal + adj_year + div_floor!(adj_year, 4) - div_floor!(adj_year, 100)
+    (ordinal + adj_year + div_floor!(adj_year, 4) - div_floor!(adj_year, 100)
         + div_floor!(adj_year, 400)
         + 6)
-    .rem_euclid(7)) as _
-}
-
-pub(crate) fn days_in_year(year: i32) -> u16 {
-    365 + is_leap_year(year) as u16
+    .rem_euclid(7)
+    .cast_unsigned()
+    .truncate()
 }
 
 pub(crate) fn days_in_year_month(year: i32, month: u8) -> u8 {
-    [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month as usize - 1]
-        + (month == 2 && is_leap_year(year)) as u8
-}
-
-pub(crate) fn weeks_in_year(year: i32) -> u8 {
-    52 + (jan_weekday(year, 1) + is_leap_year(year) as u8 == 3) as u8
+    [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month.extend::<usize>() - 1]
+        + u8::from(month == 2 && is_leap_year(year))
 }
 
 pub(crate) fn ywd_to_yo(year: i32, week: u8, iso_weekday_number: u8) -> (i32, u16) {
@@ -129,8 +123,9 @@ pub(crate) fn ywd_to_yo(year: i32, week: u8, iso_weekday_number: u8) -> (i32, u1
 }
 
 pub(crate) fn ymd_to_yo(year: i32, month: u8, day: u8) -> (i32, u16) {
-    let ordinal = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][month as usize - 1]
-        + (month > 2 && is_leap_year(year)) as u16;
+    let ordinal = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+        [month.extend::<usize>() - 1]
+        + u16::from(month > 2 && is_leap_year(year));
 
     (year, ordinal + u16::from(day))
 }

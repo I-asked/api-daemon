@@ -2,7 +2,7 @@
 
 use std::{
     cell::RefCell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     future::Future,
     io,
     ops::Deref,
@@ -17,18 +17,19 @@ use actix_codec::{AsyncRead, AsyncWrite, ReadBuf};
 use actix_http::Protocol;
 use actix_rt::time::{sleep, Sleep};
 use actix_service::Service;
-use ahash::AHashMap;
 use futures_core::future::LocalBoxFuture;
-use futures_util::FutureExt;
+use futures_util::FutureExt as _;
 use http::uri::Authority;
 use pin_project_lite::pin_project;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use super::config::ConnectorConfig;
-use super::connection::{ConnectionInnerType, ConnectionIo, ConnectionType, H2ConnectionInner};
-use super::error::ConnectError;
-use super::h2proto::handshake;
-use super::Connect;
+use super::{
+    config::ConnectorConfig,
+    connection::{ConnectionInnerType, ConnectionIo, ConnectionType, H2ConnectionInner},
+    error::ConnectError,
+    h2proto::handshake,
+    Connect,
+};
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
 pub struct Key {
@@ -62,7 +63,7 @@ where
 {
     fn new(config: ConnectorConfig) -> Self {
         let permits = Arc::new(Semaphore::new(config.limit));
-        let available = RefCell::new(AHashMap::default());
+        let available = RefCell::new(HashMap::default());
 
         Self(Rc::new(ConnectionPoolInnerPriv {
             config,
@@ -97,7 +98,7 @@ where
     type Target = ConnectionPoolInnerPriv<Io>;
 
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 
@@ -124,7 +125,7 @@ where
     Io: AsyncWrite + Unpin + 'static,
 {
     config: ConnectorConfig,
-    available: RefCell<AHashMap<Key, VecDeque<PooledConnection<Io>>>>,
+    available: RefCell<HashMap<Key, VecDeque<PooledConnection<Io>>>>,
     permits: Arc<Semaphore>,
 }
 
@@ -202,7 +203,9 @@ where
                             // check if the connection is still usable
                             if let ConnectionInnerType::H1(ref mut io) = c.conn {
                                 let check = ConnectionCheckFuture { io };
-                                match check.now_or_never().expect("ConnectionCheckFuture must never yield with Poll::Pending.") {
+                                match check.now_or_never().expect(
+                                    "ConnectionCheckFuture must never yield with Poll::Pending.",
+                                ) {
                                     ConnectionState::Tainted => {
                                         inner.close(c.conn);
                                         continue;
@@ -232,7 +235,7 @@ where
                 None => {
                     let (io, proto) = connector.call(req).await?;
 
-                    // TODO: remove when http3 is added in support.
+                    // NOTE: remove when http3 is added in support.
                     assert!(proto != Protocol::Http3);
 
                     if proto == Protocol::Http1 {

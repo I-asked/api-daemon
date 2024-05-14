@@ -1,14 +1,11 @@
 use std::{future::Future, str, task::Poll, time::Duration};
 
-use actix_rt::{pin, time::sleep};
-use actix_service::fn_service;
-use actix_utils::future::{ready, Ready};
-use bytes::Bytes;
-use futures_util::future::lazy;
-
 use actix_codec::Framed;
-use actix_service::Service;
-use bytes::{Buf, BytesMut};
+use actix_rt::{pin, time::sleep};
+use actix_service::{fn_service, Service};
+use actix_utils::future::{ready, Ready};
+use bytes::{Buf, Bytes, BytesMut};
+use futures_util::future::lazy;
 
 use super::dispatcher::{Dispatcher, DispatcherState, DispatcherStateProj, Flags};
 use crate::{
@@ -43,8 +40,8 @@ fn status_service(
     fn_service(move |_req: Request| ready(Ok::<_, Error>(Response::new(status))))
 }
 
-fn echo_path_service(
-) -> impl Service<Request, Response = Response<impl MessageBody>, Error = Error> {
+fn echo_path_service() -> impl Service<Request, Response = Response<impl MessageBody>, Error = Error>
+{
     fn_service(|req: Request| {
         let path = req.path().as_bytes();
         ready(Ok::<_, Error>(
@@ -53,8 +50,8 @@ fn echo_path_service(
     })
 }
 
-fn drop_payload_service(
-) -> impl Service<Request, Response = Response<&'static str>, Error = Error> {
+fn drop_payload_service() -> impl Service<Request, Response = Response<&'static str>, Error = Error>
+{
     fn_service(|mut req: Request| async move {
         let _ = req.take_payload();
         Ok::<_, Error>(Response::with_body(StatusCode::OK, "payload dropped"))
@@ -64,7 +61,7 @@ fn drop_payload_service(
 fn echo_payload_service() -> impl Service<Request, Response = Response<Bytes>, Error = Error> {
     fn_service(|mut req: Request| {
         Box::pin(async move {
-            use futures_util::stream::StreamExt as _;
+            use futures_util::StreamExt as _;
 
             let mut pl = req.take_payload();
             let mut body = BytesMut::new();
@@ -637,7 +634,7 @@ async fn expect_handling() {
 
         if let DispatcherState::Normal { ref inner } = h1.inner {
             let io = inner.io.as_ref().unwrap();
-            let mut res = (&io.write_buf()[..]).to_owned();
+            let mut res = io.write_buf()[..].to_owned();
             stabilize_date_header(&mut res);
 
             assert_eq!(
@@ -699,7 +696,7 @@ async fn expect_eager() {
 
         if let DispatcherState::Normal { ref inner } = h1.inner {
             let io = inner.io.as_ref().unwrap();
-            let mut res = (&io.write_buf()[..]).to_owned();
+            let mut res = io.write_buf()[..].to_owned();
             stabilize_date_header(&mut res);
 
             // Despite the content-length header and even though the request payload has not
@@ -783,6 +780,9 @@ async fn upgrade_handling() {
     .await;
 }
 
+// fix in #2624 reverted temporarily
+// complete fix tracked in #2745
+#[ignore]
 #[actix_rt::test]
 async fn handler_drop_payload() {
     let _ = env_logger::try_init();
@@ -929,7 +929,6 @@ fn http_msg(msg: impl AsRef<str>) -> BytesMut {
         .as_ref()
         .trim()
         .split('\n')
-        .into_iter()
         .map(|line| [line.trim_start(), "\r"].concat())
         .collect::<Vec<_>>()
         .join("\n");

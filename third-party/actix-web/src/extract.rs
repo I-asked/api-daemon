@@ -18,9 +18,11 @@ use crate::{dev::Payload, Error, HttpRequest};
 /// A type that implements [`FromRequest`] is called an **extractor** and can extract data from
 /// the request. Some types that implement this trait are: [`Json`], [`Header`], and [`Path`].
 ///
+/// Check out [`ServiceRequest::extract`](crate::dev::ServiceRequest::extract) if you want to
+/// leverage extractors when implementing middlewares.
+///
 /// # Configuration
 /// An extractor can be customized by injecting the corresponding configuration with one of:
-///
 /// - [`App::app_data()`][crate::App::app_data]
 /// - [`Scope::app_data()`][crate::Scope::app_data]
 /// - [`Resource::app_data()`][crate::Resource::app_data]
@@ -64,13 +66,29 @@ pub trait FromRequest: Sized {
     /// The associated error which can be returned.
     type Error: Into<Error>;
 
-    /// Future that resolves to a Self.
+    /// Future that resolves to a `Self`.
+    ///
+    /// To use an async function or block, the futures must be boxed. The following snippet will be
+    /// common when creating async/await extractors (that do not consume the body).
+    ///
+    /// ```ignore
+    /// type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
+    /// // or
+    /// type Future = futures_util::future::LocalBoxFuture<'static, Result<Self, Self::Error>>;
+    ///
+    /// fn from_request(req: HttpRequest, ...) -> Self::Future {
+    ///     let req = req.clone();
+    ///     Box::pin(async move {
+    ///         ...
+    ///     })
+    /// }
+    /// ```
     type Future: Future<Output = Result<Self, Self::Error>>;
 
-    /// Create a Self from request parts asynchronously.
+    /// Create a `Self` from request parts asynchronously.
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future;
 
-    /// Create a Self from request head asynchronously.
+    /// Create a `Self` from request head asynchronously.
     ///
     /// This method is short for `T::from_request(req, &mut Payload::None)`.
     fn extract(req: &HttpRequest) -> Self::Future {
@@ -78,9 +96,9 @@ pub trait FromRequest: Sized {
     }
 }
 
-/// Optionally extract a field from the request
+/// Optionally extract from the request.
 ///
-/// If the FromRequest for T fails, return None rather than returning an error response
+/// If the inner `T::from_request` returns an error, handler will receive `None` instead.
 ///
 /// # Examples
 /// ```
@@ -157,17 +175,18 @@ where
         let res = ready!(this.fut.poll(cx));
         match res {
             Ok(t) => Poll::Ready(Ok(Some(t))),
-            Err(e) => {
-                log::debug!("Error for Option<T> extractor: {}", e.into());
+            Err(err) => {
+                log::debug!("Error for Option<T> extractor: {}", err.into());
                 Poll::Ready(Ok(None))
             }
         }
     }
 }
 
-/// Optionally extract a field from the request or extract the Error if unsuccessful
+/// Extract from the request, passing error type through to handler.
 ///
-/// If the `FromRequest` for T fails, inject Err into handler rather than returning an error response
+/// If the inner `T::from_request` returns an error, allow handler to receive the error rather than
+/// immediately returning an error response.
 ///
 /// # Examples
 /// ```
@@ -198,8 +217,8 @@ where
 /// /// extract `Thing` from request
 /// async fn index(supplied_thing: Result<Thing>) -> String {
 ///     match supplied_thing {
-///         Ok(thing) => format!("Got thing: {:?}", thing),
-///         Err(e) => format!("Error extracting thing: {}", e)
+///         Ok(thing) => format!("Got thing: {thing:?}"),
+///         Err(err) => format!("Error extracting thing: {err}"),
 ///     }
 /// }
 ///
@@ -336,7 +355,7 @@ mod tuple_from_req {
                                 Poll::Ready(Ok(output)) => {
                                     let _ = this.$T.as_mut().project_replace(ExtractFuture::Done { output });
                                 },
-                                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                                Poll::Ready(Err(err)) => return Poll::Ready(Err(err.into())),
                                 Poll::Pending => ready = false,
                             },
                             ExtractProj::Done { .. } => {},
@@ -397,6 +416,10 @@ mod tuple_from_req {
     tuple_from_req! { TupleFromRequest10; A, B, C, D, E, F, G, H, I, J }
     tuple_from_req! { TupleFromRequest11; A, B, C, D, E, F, G, H, I, J, K }
     tuple_from_req! { TupleFromRequest12; A, B, C, D, E, F, G, H, I, J, K, L }
+    tuple_from_req! { TupleFromRequest13; A, B, C, D, E, F, G, H, I, J, K, L, M }
+    tuple_from_req! { TupleFromRequest14; A, B, C, D, E, F, G, H, I, J, K, L, M, N }
+    tuple_from_req! { TupleFromRequest15; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O }
+    tuple_from_req! { TupleFromRequest16; A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P }
 }
 
 #[cfg(test)]
@@ -406,8 +429,10 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::test::TestRequest;
-    use crate::types::{Form, FormConfig};
+    use crate::{
+        test::TestRequest,
+        types::{Form, FormConfig},
+    };
 
     #[derive(Deserialize, Debug, PartialEq)]
     struct Info {

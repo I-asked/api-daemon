@@ -6,11 +6,11 @@ use crossbeam_utils::atomic::AtomicCell;
 
 #[test]
 fn is_lock_free() {
-    struct UsizeWrap(usize);
-    struct U8Wrap(bool);
-    struct I16Wrap(i16);
+    struct UsizeWrap(#[allow(dead_code)] usize);
+    struct U8Wrap(#[allow(dead_code)] bool);
+    struct I16Wrap(#[allow(dead_code)] i16);
     #[repr(align(8))]
-    struct U64Align8(u64);
+    struct U64Align8(#[allow(dead_code)] u64);
 
     assert!(AtomicCell::<usize>::is_lock_free());
     assert!(AtomicCell::<isize>::is_lock_free());
@@ -35,17 +35,13 @@ fn is_lock_free() {
     // of `AtomicU64` is `8`, so `AtomicCell<u64>` is not lock-free.
     assert_eq!(
         AtomicCell::<u64>::is_lock_free(),
-        cfg!(not(crossbeam_no_atomic_64))
-            && cfg!(any(
-                target_pointer_width = "64",
-                target_pointer_width = "128"
-            ))
+        cfg!(target_has_atomic = "64") && std::mem::align_of::<u64>() == 8
     );
     assert_eq!(mem::size_of::<U64Align8>(), 8);
     assert_eq!(mem::align_of::<U64Align8>(), 8);
     assert_eq!(
         AtomicCell::<U64Align8>::is_lock_free(),
-        cfg!(not(crossbeam_no_atomic_64))
+        cfg!(target_has_atomic = "64")
     );
 
     // AtomicU128 is unstable
@@ -311,7 +307,6 @@ test_arithmetic!(arithmetic_i128, i128);
 
 // https://github.com/crossbeam-rs/crossbeam/issues/748
 #[cfg_attr(miri, ignore)] // TODO
-#[rustversion::since(1.37)] // #[repr(align(N))] requires Rust 1.37
 #[test]
 fn issue_748() {
     #[allow(dead_code)]
@@ -325,8 +320,55 @@ fn issue_748() {
     assert_eq!(mem::size_of::<Test>(), 8);
     assert_eq!(
         AtomicCell::<Test>::is_lock_free(),
-        cfg!(not(crossbeam_no_atomic_64))
+        cfg!(target_has_atomic = "64")
     );
     let x = AtomicCell::new(Test::FieldLess);
     assert_eq!(x.load(), Test::FieldLess);
+}
+
+// https://github.com/crossbeam-rs/crossbeam/issues/833
+#[test]
+fn issue_833() {
+    use std::num::NonZeroU128;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+
+    #[cfg(miri)]
+    const N: usize = 10_000;
+    #[cfg(not(miri))]
+    const N: usize = 1_000_000;
+
+    #[allow(dead_code)]
+    enum Enum {
+        NeverConstructed,
+        Cell(AtomicCell<NonZeroU128>),
+    }
+
+    static STATIC: Enum = Enum::Cell(AtomicCell::new(match NonZeroU128::new(1) {
+        Some(nonzero) => nonzero,
+        None => unreachable!(),
+    }));
+    static FINISHED: AtomicBool = AtomicBool::new(false);
+
+    let handle = thread::spawn(|| {
+        let cell = match &STATIC {
+            Enum::NeverConstructed => unreachable!(),
+            Enum::Cell(cell) => cell,
+        };
+        let x = NonZeroU128::new(0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000).unwrap();
+        let y = NonZeroU128::new(0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF).unwrap();
+        while !FINISHED.load(Ordering::Relaxed) {
+            cell.store(x);
+            cell.store(y);
+        }
+    });
+
+    for _ in 0..N {
+        if let Enum::NeverConstructed = STATIC {
+            unreachable!(":(");
+        }
+    }
+
+    FINISHED.store(true, Ordering::Relaxed);
+    handle.join().unwrap();
 }

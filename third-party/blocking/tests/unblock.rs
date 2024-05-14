@@ -1,4 +1,7 @@
+#![allow(clippy::needless_range_loop)]
+
 use std::io::{Cursor, SeekFrom};
+use std::panic::AssertUnwindSafe;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,16 +26,18 @@ fn sleep() {
 
 #[test]
 fn chan() {
+    const N: i32 = if cfg!(miri) { 50 } else { 100_000 };
+
     future::block_on(async {
         let (s, r) = mpsc::sync_channel::<i32>(100);
         let handle = thread::spawn(move || {
-            for i in 0..100_000 {
+            for i in 0..N {
                 s.send(i).unwrap();
             }
         });
 
         let mut r = Unblock::new(r.into_iter());
-        for i in 0i32..100_000 {
+        for i in 0..N {
             assert_eq!(r.next().await, Some(i));
         }
 
@@ -43,8 +48,10 @@ fn chan() {
 
 #[test]
 fn read() {
+    const N: usize = if cfg!(miri) { 20_000 } else { 20_000_000 };
+
     future::block_on(async {
-        let mut v1 = vec![0u8; 20_000_000];
+        let mut v1 = vec![0u8; N];
         for i in 0..v1.len() {
             v1[i] = i as u8;
         }
@@ -60,8 +67,10 @@ fn read() {
 
 #[test]
 fn write() {
+    const N: usize = if cfg!(miri) { 20_000 } else { 20_000_000 };
+
     future::block_on(async {
-        let mut v1 = vec![0u8; 20_000_000];
+        let mut v1 = vec![0u8; N];
         for i in 0..v1.len() {
             v1[i] = i as u8;
         }
@@ -92,4 +101,40 @@ fn seek() {
         v.read(&mut byte).await.unwrap();
         assert_eq!(byte[0], 15);
     })
+}
+
+#[test]
+fn panic() {
+    future::block_on(async {
+        let x = unblock(|| panic!("expected failure"));
+        let panic = x.catch_unwind().await.unwrap_err();
+
+        // Make sure it's our panic and not an unrelated one.
+        let msg = if let Some(msg) = panic.downcast_ref::<&'static str>() {
+            msg.to_string()
+        } else {
+            *panic.downcast::<String>().unwrap()
+        };
+        assert_eq!(msg, "expected failure");
+    });
+}
+
+#[test]
+fn panic_with_mut() {
+    future::block_on(async {
+        let mut io = Unblock::new(());
+        let x = io.with_mut(|()| panic!("expected failure"));
+        let panic = AssertUnwindSafe(x).catch_unwind().await.unwrap_err();
+
+        // Make sure it's our panic and not an unrelated one.
+        let msg = if let Some(msg) = panic.downcast_ref::<&'static str>() {
+            msg.to_string()
+        } else {
+            *panic.downcast::<String>().unwrap()
+        };
+        assert_eq!(
+            msg,
+            "`Unblock::with_mut()` operation has panicked: RecvError"
+        );
+    });
 }

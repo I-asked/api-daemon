@@ -10,21 +10,33 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2018"
+edition = "2021"
 name = "actix-files"
-version = "0.6.0"
-authors = ["Nikolay Kim <fafhrd91@gmail.com>", "fakeshadow <24548779@qq.com>", "Rob Ede <robjtede@icloud.com>"]
+version = "0.6.5"
+authors = [
+    "Nikolay Kim <fafhrd91@gmail.com>",
+    "Rob Ede <robjtede@icloud.com>",
+]
 description = "Static file serving for Actix Web"
 homepage = "https://actix.rs"
-keywords = ["actix", "http", "async", "futures"]
-categories = ["asynchronous", "web-programming::http-server"]
+readme = "README.md"
+keywords = [
+    "actix",
+    "http",
+    "async",
+    "futures",
+]
+categories = [
+    "asynchronous",
+    "web-programming::http-server",
+]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/actix/actix-web"
-resolver = "2"
 
 [lib]
 name = "actix_files"
 path = "src/lib.rs"
+
 [dependencies.actix-http]
 version = "3"
 
@@ -38,11 +50,8 @@ version = "3"
 version = "4"
 default-features = false
 
-[dependencies.askama_escape]
-version = "0.10"
-
 [dependencies.bitflags]
-version = "1"
+version = "2"
 
 [dependencies.bytes]
 version = "1"
@@ -51,7 +60,7 @@ version = "1"
 version = "0.99.5"
 
 [dependencies.futures-core]
-version = "0.3.7"
+version = "0.3.17"
 features = ["alloc"]
 default-features = false
 
@@ -62,7 +71,7 @@ version = "0.1.4"
 version = "0.4"
 
 [dependencies.mime]
-version = "0.3"
+version = "0.3.9"
 
 [dependencies.mime_guess]
 version = "2.0.1"
@@ -73,10 +82,20 @@ version = "2.1"
 [dependencies.pin-project-lite]
 version = "0.2.7"
 
-[dependencies.tokio-uring]
-version = "0.2"
-features = ["bytes"]
-optional = true
+[dependencies.v_htmlescape]
+version = "0.15.5"
 
 [features]
-experimental-io-uring = ["actix-web/experimental-io-uring", "tokio-uring"]
+experimental-io-uring = [
+    "actix-web/experimental-io-uring",
+    "tokio-uring",
+]
+
+[target."cfg(target_os = \"linux\")".dependencies.actix-server]
+version = "2.2"
+optional = true
+
+[target."cfg(target_os = \"linux\")".dependencies.tokio-uring]
+version = "0.4"
+features = ["bytes"]
+optional = true

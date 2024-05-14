@@ -7,18 +7,15 @@ use std::{
 
 use actix_http::{
     body::{self, BodyStream, BoxBody, SizedStream},
-    header, Error, HttpService, KeepAlive, Request, Response, StatusCode,
+    header, Error, HttpService, KeepAlive, Request, Response, StatusCode, Version,
 };
 use actix_http_test::test_server;
-use actix_rt::time::sleep;
+use actix_rt::{net::TcpStream, time::sleep};
 use actix_service::fn_service;
 use actix_utils::future::{err, ok, ready};
 use bytes::Bytes;
 use derive_more::{Display, Error};
-use futures_util::{
-    stream::{once, StreamExt as _},
-    FutureExt as _,
-};
+use futures_util::{stream::once, FutureExt as _, StreamExt as _};
 use regex::Regex;
 
 #[actix_rt::test]
@@ -140,7 +137,7 @@ async fn expect_continue_h1() {
 
 #[actix_rt::test]
 async fn chunked_payload() {
-    let chunk_sizes = vec![32768, 32, 32768];
+    let chunk_sizes = [32768, 32, 32768];
     let total_size: usize = chunk_sizes.iter().sum();
 
     let mut srv = test_server(|| {
@@ -150,7 +147,7 @@ async fn chunked_payload() {
                     .take_payload()
                     .map(|res| match res {
                         Ok(pl) => pl,
-                        Err(e) => panic!("Error reading payload: {}", e),
+                        Err(err) => panic!("Error reading payload: {err}"),
                     })
                     .fold(0usize, |acc, chunk| ready(acc + chunk.len()))
                     .map(|req_size| {
@@ -167,8 +164,7 @@ async fn chunked_payload() {
 
         for chunk_size in chunk_sizes.iter() {
             let mut bytes = Vec::new();
-            let random_bytes: Vec<u8> =
-                (0..*chunk_size).map(|_| rand::random::<u8>()).collect();
+            let random_bytes: Vec<u8> = (0..*chunk_size).map(|_| rand::random::<u8>()).collect();
 
             bytes.extend(format!("{:X}\r\n", chunk_size).as_bytes());
             bytes.extend(&random_bytes[..]);
@@ -353,8 +349,7 @@ async fn http10_keepalive() {
     .await;
 
     let mut stream = net::TcpStream::connect(srv.addr()).unwrap();
-    let _ =
-        stream.write_all(b"GET /test/tests/test HTTP/1.0\r\nconnection: keep-alive\r\n\r\n");
+    let _ = stream.write_all(b"GET /test/tests/test HTTP/1.0\r\nconnection: keep-alive\r\n\r\n");
     let mut data = vec![0; 1024];
     let _ = stream.read(&mut data);
     assert_eq!(&data[..17], b"HTTP/1.0 200 OK\r\n");
@@ -405,7 +400,7 @@ async fn content_length() {
     let mut srv = test_server(|| {
         HttpService::build()
             .h1(|req: Request| {
-                let indx: usize = req.uri().path()[1..].parse().unwrap();
+                let idx: usize = req.uri().path()[1..].parse().unwrap();
                 let statuses = [
                     StatusCode::NO_CONTENT,
                     StatusCode::CONTINUE,
@@ -414,7 +409,7 @@ async fn content_length() {
                     StatusCode::OK,
                     StatusCode::NOT_FOUND,
                 ];
-                ok::<_, Infallible>(Response::new(statuses[indx]))
+                ok::<_, Infallible>(Response::new(statuses[idx]))
             })
             .tcp()
     })
@@ -796,8 +791,9 @@ async fn not_modified_spec_h1() {
                         .map_into_boxed_body(),
 
                     // with no content-length
-                    "/body" => Response::with_body(StatusCode::NOT_MODIFIED, "1234")
-                        .map_into_boxed_body(),
+                    "/body" => {
+                        Response::with_body(StatusCode::NOT_MODIFIED, "1234").map_into_boxed_body()
+                    }
 
                     // with manual content-length header and specific None body
                     "/cl-none" => {
@@ -855,6 +851,47 @@ async fn not_modified_spec_h1() {
     assert!(!srv.load_body(res).await.unwrap().is_empty());
 
     // TODO: add stream response tests
+
+    srv.stop().await;
+}
+
+#[actix_rt::test]
+async fn h2c_auto() {
+    let mut srv = test_server(|| {
+        HttpService::build()
+            .keep_alive(KeepAlive::Disabled)
+            .finish(|req: Request| {
+                let body = match req.version() {
+                    Version::HTTP_11 => "h1",
+                    Version::HTTP_2 => "h2",
+                    _ => unreachable!(),
+                };
+                ok::<_, Infallible>(Response::ok().set_body(body))
+            })
+            .tcp_auto_h2c()
+    })
+    .await;
+
+    let req = srv.get("/");
+    assert_eq!(req.get_version(), &Version::HTTP_11);
+    let mut res = req.send().await.unwrap();
+    assert!(res.status().is_success());
+    assert_eq!(res.body().await.unwrap(), &b"h1"[..]);
+
+    // awc doesn't support forcing the version to http/2 so use h2 manually
+
+    let tcp = TcpStream::connect(srv.addr()).await.unwrap();
+    let (h2, connection) = h2::client::handshake(tcp).await.unwrap();
+    tokio::spawn(async move { connection.await.unwrap() });
+    let mut h2 = h2.ready().await.unwrap();
+
+    let request = ::http::Request::new(());
+    let (response, _) = h2.send_request(request, true).unwrap();
+    let (head, mut body) = response.await.unwrap().into_parts();
+    let body = body.data().await.unwrap().unwrap();
+
+    assert!(head.status.is_success());
+    assert_eq!(body, &b"h2"[..]);
 
     srv.stop().await;
 }

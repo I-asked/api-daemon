@@ -1,6 +1,7 @@
 pub type c_char = i8;
 pub type wchar_t = i32;
 pub type __u64 = ::c_ulong;
+pub type __s64 = ::c_long;
 pub type nlink_t = u64;
 pub type blksize_t = i64;
 
@@ -444,6 +445,14 @@ pub const SYS_faccessat2: ::c_long = 5000 + 439;
 pub const SYS_process_madvise: ::c_long = 5000 + 440;
 pub const SYS_epoll_pwait2: ::c_long = 5000 + 441;
 pub const SYS_mount_setattr: ::c_long = 5000 + 442;
+pub const SYS_quotactl_fd: ::c_long = 5000 + 443;
+pub const SYS_landlock_create_ruleset: ::c_long = 5000 + 444;
+pub const SYS_landlock_add_rule: ::c_long = 5000 + 445;
+pub const SYS_landlock_restrict_self: ::c_long = 5000 + 446;
+pub const SYS_memfd_secret: ::c_long = 5000 + 447;
+pub const SYS_process_mrelease: ::c_long = 5000 + 448;
+pub const SYS_futex_waitv: ::c_long = 5000 + 449;
+pub const SYS_set_mempolicy_home_node: ::c_long = 5000 + 450;
 
 pub const O_DIRECT: ::c_int = 0x8000;
 pub const O_DIRECTORY: ::c_int = 0x10000;
@@ -458,6 +467,7 @@ pub const O_SYNC: ::c_int = 0x4010;
 pub const O_RSYNC: ::c_int = 0x4010;
 pub const O_DSYNC: ::c_int = 0x10;
 pub const O_ASYNC: ::c_int = 0x1000;
+pub const O_LARGEFILE: ::c_int = 0x2000;
 
 pub const EDEADLK: ::c_int = 45;
 pub const ENAMETOOLONG: ::c_int = 78;
@@ -602,12 +612,10 @@ pub const F_GETOWN: ::c_int = 23;
 pub const F_SETOWN: ::c_int = 24;
 pub const F_SETLK: ::c_int = 6;
 pub const F_SETLKW: ::c_int = 7;
-pub const F_OFD_GETLK: ::c_int = 36;
-pub const F_OFD_SETLK: ::c_int = 37;
-pub const F_OFD_SETLKW: ::c_int = 38;
 
 pub const MCL_CURRENT: ::c_int = 0x0001;
 pub const MCL_FUTURE: ::c_int = 0x0002;
+pub const MCL_ONFAULT: ::c_int = 0x0004;
 
 pub const CBAUD: ::tcflag_t = 0o0010017;
 pub const TAB1: ::tcflag_t = 0x00000800;

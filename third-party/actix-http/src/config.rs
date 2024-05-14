@@ -35,7 +35,7 @@ impl Default for ServiceConfig {
 }
 
 impl ServiceConfig {
-    /// Create instance of `ServiceConfig`
+    /// Create instance of `ServiceConfig`.
     pub fn new(
         keep_alive: KeepAlive,
         client_request_timeout: Duration,
@@ -132,14 +132,14 @@ impl ServiceConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{date::DATE_VALUE_LENGTH, notify_on_drop};
-
     use actix_rt::{
         task::yield_now,
         time::{sleep, sleep_until},
     };
     use memchr::memmem;
+
+    use super::*;
+    use crate::{date::DATE_VALUE_LENGTH, notify_on_drop};
 
     #[actix_rt::test]
     async fn test_date_service_update() {

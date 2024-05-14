@@ -56,7 +56,6 @@ fn works_1() {
     assert_eq!(None, iter.next());
 }
 
-#[cfg_attr(miri, ignore)] // https://github.com/rust-lang/miri/issues/1038
 #[test]
 fn works_2() {
     let (a_tx, a_rx) = oneshot::channel::<i32>();
@@ -86,7 +85,6 @@ fn from_iterator() {
     assert_eq!(block_on(stream.collect::<Vec<_>>()), vec![1, 2, 3]);
 }
 
-#[cfg_attr(miri, ignore)] // https://github.com/rust-lang/miri/issues/1038
 #[test]
 fn finished_future() {
     let (_a_tx, a_rx) = oneshot::channel::<i32>();
@@ -262,6 +260,20 @@ fn into_iter_len() {
 }
 
 #[test]
+fn into_iter_partial() {
+    let stream = vec![future::ready(1), future::ready(2), future::ready(3), future::ready(4)]
+        .into_iter()
+        .collect::<FuturesUnordered<_>>();
+
+    let mut into_iter = stream.into_iter();
+    assert!(into_iter.next().is_some());
+    assert!(into_iter.next().is_some());
+    assert!(into_iter.next().is_some());
+    assert_eq!(into_iter.len(), 1);
+    // don't panic when iterator is dropped before completing
+}
+
+#[test]
 fn futures_not_moved_after_poll() {
     // Future that will be ready after being polled twice,
     // asserting that it does not move.
@@ -368,4 +380,29 @@ fn clear() {
     assert!(tasks.is_terminated());
     tasks.clear();
     assert!(!tasks.is_terminated());
+}
+
+// https://github.com/rust-lang/futures-rs/issues/2529#issuecomment-997290279
+#[test]
+fn clear_in_loop() {
+    const N: usize =
+        if cfg!(miri) || option_env!("QEMU_LD_PREFIX").is_some() { 100 } else { 10_000 };
+    futures::executor::block_on(async {
+        async fn task() {
+            let (s, r) = oneshot::channel();
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_micros(100));
+                let _ = s.send(());
+            });
+            r.await.unwrap()
+        }
+        let mut futures = FuturesUnordered::new();
+        for _ in 0..N {
+            for _ in 0..24 {
+                futures.push(task());
+            }
+            let _ = futures.next().await;
+            futures.clear();
+        }
+    });
 }

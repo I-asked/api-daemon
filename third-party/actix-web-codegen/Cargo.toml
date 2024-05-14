@@ -10,20 +10,24 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2018"
+edition = "2021"
 name = "actix-web-codegen"
-version = "4.0.0"
-authors = ["Nikolay Kim <fafhrd91@gmail.com>", "Rob Ede <robjtede@icloud.com>"]
+version = "4.2.2"
+authors = [
+    "Nikolay Kim <fafhrd91@gmail.com>",
+    "Rob Ede <robjtede@icloud.com>",
+]
 description = "Routing and runtime macros for Actix Web"
 homepage = "https://actix.rs"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/actix/actix-web.git"
-resolver = "2"
 
 [lib]
 proc-macro = true
+
 [dependencies.actix-router]
-version = "0.5.0"
+version = "0.5"
 
 [dependencies.proc-macro2]
 version = "1"
@@ -32,5 +36,8 @@ version = "1"
 version = "1"
 
 [dependencies.syn]
-version = "1"
-features = ["full", "parsing"]
+version = "2"
+features = [
+    "full",
+    "extra-traits",
+]

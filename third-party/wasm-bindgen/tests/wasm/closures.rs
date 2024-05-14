@@ -1,5 +1,4 @@
-#![cfg(feature = "nightly")]
-
+use js_sys::Number;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -119,6 +118,11 @@ extern "C" {
 
     fn js_store_forgotten_closure(closure: &Closure<dyn Fn()>);
     fn js_call_forgotten_closure();
+
+    #[wasm_bindgen(js_name = many_arity_call2)]
+    fn externref_call(a: &Closure<dyn Fn(JsValue)>);
+    #[wasm_bindgen(js_name = many_arity_call2)]
+    fn named_externref_call(a: &Closure<dyn Fn(Number)>);
 }
 
 #[wasm_bindgen_test]
@@ -428,7 +432,9 @@ fn drop_drops() {
         }
     }
     let a = A;
-    let x: Closure<dyn Fn()> = Closure::new(move || drop(&a));
+    let x: Closure<dyn Fn()> = Closure::new(move || {
+        let _ = a;
+    });
     drop(x);
     unsafe {
         assert!(HIT);
@@ -489,7 +495,6 @@ fn test_closure_returner() {
     type ClosureType = dyn FnMut() -> BadStruct;
 
     use js_sys::{Object, Reflect};
-    use wasm_bindgen::JsCast;
 
     js_test_closure_returner();
 
@@ -507,7 +512,7 @@ fn test_closure_returner() {
         Reflect::set(
             &o,
             &JsValue::from("someKey"),
-            &some_fn.as_ref().unchecked_ref(),
+            some_fn.as_ref().unchecked_ref(),
         )
         .unwrap();
         Reflect::set(
@@ -602,25 +607,33 @@ fn call_destroyed_doesnt_segfault() {
     }
 
     let a = A(1, 1);
-    let a = Closure::wrap(Box::new(move || drop(&a)) as Box<dyn Fn()>);
+    let a = Closure::wrap(Box::new(move || {
+        let _ = a;
+    }) as Box<dyn Fn()>);
     let b = a.as_ref().clone();
     drop(a);
     call_destroyed(&b);
 
     let a = A(2, 2);
-    let a = Closure::wrap(Box::new(move || drop(&a)) as Box<dyn FnMut()>);
+    let a = Closure::wrap(Box::new(move || {
+        let _ = a;
+    }) as Box<dyn FnMut()>);
     let b = a.as_ref().clone();
     drop(a);
     call_destroyed(&b);
 
     let a = A(1, 1);
-    let a = Closure::wrap(Box::new(move |_: &JsValue| drop(&a)) as Box<dyn Fn(&JsValue)>);
+    let a = Closure::wrap(Box::new(move |_: &JsValue| {
+        let _ = a;
+    }) as Box<dyn Fn(&JsValue)>);
     let b = a.as_ref().clone();
     drop(a);
     call_destroyed(&b);
 
     let a = A(2, 2);
-    let a = Closure::wrap(Box::new(move |_: &JsValue| drop(&a)) as Box<dyn FnMut(&JsValue)>);
+    let a = Closure::wrap(Box::new(move |_: &JsValue| {
+        let _ = a;
+    }) as Box<dyn FnMut(&JsValue)>);
     let b = a.as_ref().clone();
     drop(a);
     call_destroyed(&b);
@@ -632,4 +645,10 @@ fn forget_works() {
     js_store_forgotten_closure(&a);
     a.forget();
     js_call_forgotten_closure();
+}
+
+#[wasm_bindgen_test]
+fn named_externref_no_duplicate_adapter() {
+    externref_call(&Closure::new(|a| assert_eq!(a, 1)));
+    named_externref_call(&Closure::new(|a| assert_eq!(a, 1)));
 }

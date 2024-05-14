@@ -1,10 +1,82 @@
+Version 0.6.5 (2024-05-06)
+==========================
+
+- Add rayon support for ``GraphMap`` (`#573`_, `#615`_)
+- Add ``Topo::with_initials`` method (`#585`_)
+- Add logo to the project (`#598`_)
+- Add Ford-Fulkerson algorithm (`#640`_)
+- Update ``itertools`` to 0.12.1 (`#628`_)
+- Update ``GraphMap`` to allow custom hash functions (`#623`_)
+- Fix documentation (`#630`_)
+- Fix clippy warnings (`#627`_)
+- (internal) Fix remove old ``copyclone`` macro (`#601`_)
+- (internal) Move minimum spanning tree into own module (`#624`_)
+
+.. _`#573`: https://github.com/petgraph/petgraph/pull/573
+.. _`#615`: https://github.com/petgraph/petgraph/pull/615
+.. _`#585`: https://github.com/petgraph/petgraph/pull/585
+.. _`#598`: https://github.com/petgraph/petgraph/pull/598
+.. _`#640`: https://github.com/petgraph/petgraph/pull/640
+.. _`#628`: https://github.com/petgraph/petgraph/pull/628
+.. _`#623`: https://github.com/petgraph/petgraph/pull/623
+.. _`#630`: https://github.com/petgraph/petgraph/pull/630
+.. _`#627`: https://github.com/petgraph/petgraph/pull/627
+.. _`#601`: https://github.com/petgraph/petgraph/pull/601
+.. _`#624`: https://github.com/petgraph/petgraph/pull/624
+
+Version 0.6.4 (2023-08-21)
+==========================
+
+- Update ``indexmap`` to 2.0.0 (`#568`_)
+- Fix typos (`#544`_)
+
+.. _`#544`: https://github.com/petgraph/petgraph/pull/544
+.. _`#568`: https://github.com/petgraph/petgraph/pull/568
+
+Version 0.6.3 (2023-02-07)
+==========================
+
+- Added an iterator over subgraph isomorphisms (`#500`_)
+- Added serde support on ``GraphMap`` (`#496`_)
+- Added ``reverse`` method for ``StableGraph`` (`#533`_)
+- Added ``edges_connecting`` iterator for ``StableGraph`` (`#521`_)
+- Fix Floyd-Warshall algorithm behaviour on undirected graphs (`487`_)
+- Fix IntoEdgesDirected implementation for NodeFiltered when direction is Incoming (`476`_)
+- Fix cardinality check in subgraph isomorphism (`472`_)
+- Fix UB in ``MatrixGraph`` (`#505`_)
+
+.. _`#472`: https://github.com/petgraph/petgraph/issues/472
+.. _`#476`: https://github.com/petgraph/petgraph/issues/476
+.. _`#487`: https://github.com/petgraph/petgraph/issues/487
+.. _`#496`: https://github.com/petgraph/petgraph/issues/496
+.. _`#500`: https://github.com/petgraph/petgraph/issues/500
+.. _`#505`: https://github.com/petgraph/petgraph/issues/505
+.. _`#521`: https://github.com/petgraph/petgraph/issues/521
+.. _`#533`: https://github.com/petgraph/petgraph/issues/533
+
+Version 0.6.2 (2022-05-28)
+==========================
+
+- Loosed the strict version dependency set in `493`_, to allow users to use newer versions of indexmap  (`495`_).
+
+.. _`#495`: https://github.com/petgraph/petgraph/issues/493
+
+Version 0.6.1 (2022-05-22)
+==========================
+
+- Added clarifications on Graph docs (`491`_).
+- Fix build errors on rust 1.41 (`493`_).
+
+.. _`#491`: https://github.com/petgraph/petgraph/issues/491
+.. _`#493`: https://github.com/petgraph/petgraph/issues/493
+
 Version 0.6.0 (2021-07-04)
 ==========================
 
 Breaking changes
 ----------------
 
-- MSRV is now 1.14 (`#444`_).
+- MSRV is now 1.41 (`#444`_).
 - Removed the ``NodeCompactIndexable`` trait impl for ``MatrixGraph`` (`#429`_).
 - The ``IntoEdges::edges`` implementations are now required return edges with the passed node as source (`#433`_).
 
@@ -493,7 +565,7 @@ Version 0.1.11 (2015-08-16)
 
 Version 0.1.10 (2015-06-22)
 ===========================
-  
+
 - Fix bug in WalkEdges::next_neighbor()
 
 Version 0.1.9 (2015-06-17)

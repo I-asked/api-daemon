@@ -62,7 +62,7 @@ where
 
     /// Returns `true` if given edge is in the matching, or `false` otherwise.
     ///
-    /// If any of the the nodes does not exist, `false` is returned.
+    /// If any of the nodes does not exist, `false` is returned.
     pub fn contains_edge(&self, a: G::NodeId, b: G::NodeId) -> bool {
         match self.mate(a) {
             Some(mate) => mate == b,
@@ -494,8 +494,8 @@ fn find_join<G, F>(
     graph: &G,
     edge: G::EdgeRef,
     mate: &[Option<G::NodeId>],
-    label: &mut Vec<Label<G>>,
-    first_inner: &mut Vec<usize>,
+    label: &mut [Label<G>],
+    first_inner: &mut [usize],
     mut visitor: F,
 ) where
     G: IntoEdges + NodeIndexable + Visitable,

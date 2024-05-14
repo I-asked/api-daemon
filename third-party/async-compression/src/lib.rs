@@ -29,6 +29,7 @@
 //! ---------|------
 // TODO: Kill rustfmt on this section, `#![rustfmt::skip::attributes(cfg_attr)]` should do it, but
 // that's unstable
+#![allow(unexpected_cfgs)]
 #![cfg_attr(
     feature = "futures-io",
     doc = "[`futures-io`](crate::futures) | [`futures::io::AsyncBufRead`](futures_io::AsyncBufRead), [`futures::io::AsyncWrite`](futures_io::AsyncWrite)"
@@ -36,38 +37,6 @@
 #![cfg_attr(
     not(feature = "futures-io"),
     doc = "`futures-io` (*inactive*) | `futures::io::AsyncBufRead`, `futures::io::AsyncWrite`"
-)]
-#![cfg_attr(
-    feature = "futures-bufread",
-    doc = "`futures-bufread` | (*deprecated*, use `futures-io`)"
-)]
-#![cfg_attr(
-    feature = "futures-write",
-    doc = "`futures-write` | (*deprecated*, use `futures-io`)"
-)]
-#![cfg_attr(
-    feature = "stream",
-    doc = "[`stream`] | (*deprecated*, see [`async-compression:stream`](crate::stream) docs for migration)"
-)]
-#![cfg_attr(
-    not(feature = "stream"),
-    doc = "`stream` (*inactive*) | (*deprecated*, see `async-compression::stream` docs for migration)"
-)]
-#![cfg_attr(
-    feature = "tokio-02",
-    doc = "[`tokio-02`](crate::tokio_02) | [`tokio::io::AsyncBufRead`](::tokio_02::io::AsyncBufRead), [`tokio::io::AsyncWrite`](::tokio_02::io::AsyncWrite)"
-)]
-#![cfg_attr(
-    not(feature = "tokio-02"),
-    doc = "`tokio-02` (*inactive*) | `tokio::io::AsyncBufRead`, `tokio::io::AsyncWrite`"
-)]
-#![cfg_attr(
-    feature = "tokio-03",
-    doc = "[`tokio-03`](crate::tokio_03) | [`tokio::io::AsyncBufRead`](::tokio_03::io::AsyncBufRead), [`tokio::io::AsyncWrite`](::tokio_03::io::AsyncWrite)"
-)]
-#![cfg_attr(
-    not(feature = "tokio-03"),
-    doc = "`tokio-03` (*inactive*) | `tokio::io::AsyncBufRead`, `tokio::io::AsyncWrite`"
 )]
 #![cfg_attr(
     feature = "tokio",
@@ -151,9 +120,17 @@
     not(feature = "zstd"),
     doc = "`zstd` (*inactive*) | `ZstdEncoder`, `ZstdDecoder`"
 )]
+#![cfg_attr(
+    feature = "deflate64",
+    doc = "`deflate64` | (encoder not implemented), [`Deflate64Decoder`](?search=Deflate64Decoder)"
+)]
+#![cfg_attr(
+    not(feature = "deflate64"),
+    doc = "`deflate64` (*inactive*) | (encoder not implemented), `Deflate64Decoder`"
+)]
 //!
 
-#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, feature(doc_auto_cfg, doc_cfg))]
 #![warn(
     missing_docs,
     rust_2018_idioms,
@@ -162,31 +139,25 @@
 )]
 #![cfg_attr(not(all), allow(unused))]
 
+#[cfg(any(feature = "bzip2", feature = "flate2", feature = "xz2"))]
+use std::convert::TryInto;
+
 #[macro_use]
 mod macros;
 mod codec;
 
 #[cfg(feature = "futures-io")]
-#[cfg_attr(docsrs, doc(cfg(feature = "futures-io")))]
 pub mod futures;
-#[cfg(feature = "stream")]
-#[cfg_attr(docsrs, doc(cfg(feature = "stream")))]
-pub mod stream;
 #[cfg(feature = "tokio")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod tokio;
-#[cfg(feature = "tokio-02")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio-02")))]
-pub mod tokio_02;
-#[cfg(feature = "tokio-03")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tokio-03")))]
-pub mod tokio_03;
 
 mod unshared;
 mod util;
 
 #[cfg(feature = "brotli")]
-use brotli::enc::backward_references::BrotliEncoderParams;
+pub mod brotli;
+#[cfg(feature = "zstd")]
+pub mod zstd;
 
 /// Level of compression data should be compressed with.
 #[non_exhaustive]
@@ -194,24 +165,29 @@ use brotli::enc::backward_references::BrotliEncoderParams;
 pub enum Level {
     /// Fastest quality of compression, usually produces bigger size.
     Fastest,
+
     /// Best quality of compression, usually produces the smallest size.
     Best,
+
     /// Default quality of compression defined by the selected compression algorithm.
     Default,
-    /// Precise quality based on the underlying compression algorithms'
-    /// qualities. The interpretation of this depends on the algorithm chosen
-    /// and the specific implementation backing it.
-    /// Qualities are implicitly clamped to the algorithm's maximum.
-    Precise(u32),
+
+    /// Precise quality based on the underlying compression algorithms' qualities. The
+    /// interpretation of this depends on the algorithm chosen and the specific implementation
+    /// backing it. Qualities are implicitly clamped to the algorithm's maximum.
+    Precise(i32),
 }
 
 impl Level {
     #[cfg(feature = "brotli")]
-    fn into_brotli(self, mut params: BrotliEncoderParams) -> BrotliEncoderParams {
+    fn into_brotli(
+        self,
+        mut params: ::brotli::enc::backward_references::BrotliEncoderParams,
+    ) -> ::brotli::enc::backward_references::BrotliEncoderParams {
         match self {
             Self::Fastest => params.quality = 0,
             Self::Best => params.quality = 11,
-            Self::Precise(quality) => params.quality = quality.min(11) as i32,
+            Self::Precise(quality) => params.quality = quality.clamp(0, 11),
             Self::Default => (),
         }
 
@@ -220,30 +196,47 @@ impl Level {
 
     #[cfg(feature = "bzip2")]
     fn into_bzip2(self) -> bzip2::Compression {
+        let fastest = bzip2::Compression::fast();
+        let best = bzip2::Compression::best();
+
         match self {
-            Self::Fastest => bzip2::Compression::fast(),
-            Self::Best => bzip2::Compression::best(),
-            Self::Precise(quality) => bzip2::Compression::new(quality.max(1).min(9)),
+            Self::Fastest => fastest,
+            Self::Best => best,
+            Self::Precise(quality) => bzip2::Compression::new(
+                quality
+                    .try_into()
+                    .unwrap_or(0)
+                    .clamp(fastest.level(), best.level()),
+            ),
             Self::Default => bzip2::Compression::default(),
         }
     }
 
     #[cfg(feature = "flate2")]
     fn into_flate2(self) -> flate2::Compression {
+        let fastest = flate2::Compression::fast();
+        let best = flate2::Compression::best();
+
         match self {
-            Self::Fastest => flate2::Compression::fast(),
-            Self::Best => flate2::Compression::best(),
-            Self::Precise(quality) => flate2::Compression::new(quality.min(10)),
+            Self::Fastest => fastest,
+            Self::Best => best,
+            Self::Precise(quality) => flate2::Compression::new(
+                quality
+                    .try_into()
+                    .unwrap_or(0)
+                    .clamp(fastest.level(), best.level()),
+            ),
             Self::Default => flate2::Compression::default(),
         }
     }
 
     #[cfg(feature = "zstd")]
     fn into_zstd(self) -> i32 {
+        let (fastest, best) = libzstd::compression_level_range().into_inner();
         match self {
-            Self::Fastest => 1,
-            Self::Best => 21,
-            Self::Precise(quality) => quality.min(21) as i32,
+            Self::Fastest => fastest,
+            Self::Best => best,
+            Self::Precise(quality) => quality.clamp(fastest, best),
             Self::Default => libzstd::DEFAULT_COMPRESSION_LEVEL,
         }
     }
@@ -253,7 +246,7 @@ impl Level {
         match self {
             Self::Fastest => 0,
             Self::Best => 9,
-            Self::Precise(quality) => quality.min(9),
+            Self::Precise(quality) => quality.try_into().unwrap_or(0).min(9),
             Self::Default => 5,
         }
     }

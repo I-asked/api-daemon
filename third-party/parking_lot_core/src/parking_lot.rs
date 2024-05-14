@@ -248,7 +248,7 @@ fn create_hashtable() -> &'static HashTable {
             // Free the table we created
             // SAFETY: `new_table` is created from `Box::into_raw` above and only freed here.
             unsafe {
-                Box::from_raw(new_table);
+                let _ = Box::from_raw(new_table);
             }
             old_table
         }
@@ -724,6 +724,10 @@ pub unsafe fn park(
 ///
 /// The `callback` function is called while the queue is locked and must not
 /// panic or call into any function in `parking_lot`.
+///
+/// The `parking_lot` functions are not re-entrant and calling this method
+/// from the context of an asynchronous signal handler may result in undefined
+/// behavior, including corruption of internal state and/or deadlocks.
 #[inline]
 pub unsafe fn unpark_one(
     key: usize,
@@ -801,6 +805,10 @@ pub unsafe fn unpark_one(
 /// You should only call this function with an address that you control, since
 /// you could otherwise interfere with the operation of other synchronization
 /// primitives.
+///
+/// The `parking_lot` functions are not re-entrant and calling this method
+/// from the context of an asynchronous signal handler may result in undefined
+/// behavior, including corruption of internal state and/or deadlocks.
 #[inline]
 pub unsafe fn unpark_all(key: usize, unpark_token: UnparkToken) -> usize {
     // Lock the bucket for the given key
@@ -1095,7 +1103,7 @@ pub mod deadlock {
     pub(super) use super::deadlock_impl::DeadlockData;
 
     /// Acquire a resource identified by key in the deadlock detector
-    /// Noop if deadlock_detection feature isn't enabled.
+    /// Noop if `deadlock_detection` feature isn't enabled.
     ///
     /// # Safety
     ///
@@ -1107,7 +1115,7 @@ pub mod deadlock {
     }
 
     /// Release a resource identified by key in the deadlock detector.
-    /// Noop if deadlock_detection feature isn't enabled.
+    /// Noop if `deadlock_detection` feature isn't enabled.
     ///
     /// # Panics
     ///
@@ -1468,7 +1476,7 @@ mod tests {
 
     test! {
         unpark_all_one_fast(
-            repeats: 10000, latches: 1, delay: 0, threads: 1, single_unparks: 0
+            repeats: 1000, latches: 1, delay: 0, threads: 1, single_unparks: 0
         );
         unpark_all_hundred_fast(
             repeats: 100, latches: 1, delay: 0, threads: 100, single_unparks: 0

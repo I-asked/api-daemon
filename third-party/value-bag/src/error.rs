@@ -21,16 +21,29 @@ impl Error {
             inner: Inner::Msg(msg),
         }
     }
+
+    #[cfg(feature = "serde1")]
+    pub(crate) fn try_boxed(msg: &'static str, e: impl fmt::Display) -> Self {
+        #[cfg(feature = "std")]
+        {
+            Error::boxed(format!("{msg}: {e}"))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            let _ = e;
+            Error::msg(msg)
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Inner::*;
-        match &self.inner {
+        match self.inner {
             #[cfg(feature = "std")]
-            &Boxed(ref err) => err.fmt(f),
-            &Msg(ref msg) => msg.fmt(f),
-            &Fmt => fmt::Error.fmt(f),
+            Boxed(ref err) => err.fmt(f),
+            Msg(ref msg) => msg.fmt(f),
+            Fmt => fmt::Error.fmt(f),
         }
     }
 }
@@ -46,7 +59,7 @@ mod std_support {
     use super::*;
     use crate::std::{boxed::Box, error, io};
 
-    pub(super) type BoxedError = Box<dyn error::Error + Send + Sync>;
+    pub(crate) type BoxedError = Box<dyn error::Error + Send + Sync>;
 
     impl Error {
         /// Create an error from a standard error type.

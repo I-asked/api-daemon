@@ -9,6 +9,10 @@ use crate::{StatusCode, Url};
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// The Errors that may occur when processing a `Request`.
+///
+/// Note: Errors may include the full URL used to make the `Request`. If the URL
+/// contains sensitive information (e.g. an API key as a query parameter), be
+/// sure to remove it ([`without_url`](Error::without_url))
 pub struct Error {
     inner: Box<Inner>,
 }
@@ -46,7 +50,7 @@ impl Error {
     /// if let Err(e) = response {
     ///     if e.is_redirect() {
     ///         if let Some(final_stop) = e.url() {
-    ///             println!("redirect loop at {}", final_stop);
+    ///             println!("redirect loop at {final_stop}");
     ///         }
     ///     }
     /// }
@@ -54,6 +58,28 @@ impl Error {
     /// ```
     pub fn url(&self) -> Option<&Url> {
         self.inner.url.as_ref()
+    }
+
+    /// Returns a mutable reference to the URL related to this error
+    ///
+    /// This is useful if you need to remove sensitive information from the URL
+    /// (e.g. an API key in the query), but do not want to remove the URL
+    /// entirely.
+    pub fn url_mut(&mut self) -> Option<&mut Url> {
+        self.inner.url.as_mut()
+    }
+
+    /// Add a url related to this error (overwriting any existing)
+    pub fn with_url(mut self, url: Url) -> Self {
+        self.inner.url = Some(url);
+        self
+    }
+
+    /// Strip the related url from this error (if, for example, it contains
+    /// sensitive information)
+    pub fn without_url(mut self) -> Self {
+        self.inner.url = None;
+        self
     }
 
     /// Returns true if the error is from a type Builder.
@@ -78,6 +104,11 @@ impl Error {
         while let Some(err) = source {
             if err.is::<TimedOut>() {
                 return true;
+            }
+            if let Some(io) = err.downcast_ref::<io::Error>() {
+                if io.kind() == io::ErrorKind::TimedOut {
+                    return true;
+                }
             }
             source = err.source();
         }
@@ -128,11 +159,6 @@ impl Error {
 
     // private
 
-    pub(crate) fn with_url(mut self, url: Url) -> Error {
-        self.inner.url = Some(url);
-        self
-    }
-
     #[allow(unused)]
     pub(crate) fn into_io(self) -> io::Error {
         io::Error::new(io::ErrorKind::Other, self)
@@ -158,24 +184,13 @@ impl fmt::Debug for Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        struct ForUrl<'a>(Option<&'a Url>);
-
-        impl fmt::Display for ForUrl<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                if let Some(url) = self.0 {
-                    write!(f, " for url ({})", url.as_str())
-                } else {
-                    Ok(())
-                }
-            }
-        }
-
         match self.inner.kind {
             Kind::Builder => f.write_str("builder error")?,
             Kind::Request => f.write_str("error sending request")?,
             Kind::Body => f.write_str("request or response body error")?,
             Kind::Decode => f.write_str("error decoding response body")?,
             Kind::Redirect => f.write_str("error following redirect")?,
+            Kind::Upgrade => f.write_str("error upgrading connection")?,
             Kind::Status(ref code) => {
                 let prefix = if code.is_client_error() {
                     "HTTP status client error"
@@ -183,14 +198,16 @@ impl fmt::Display for Error {
                     debug_assert!(code.is_server_error());
                     "HTTP status server error"
                 };
-                write!(f, "{} ({})", prefix, code)?;
+                write!(f, "{prefix} ({code})")?;
             }
         };
 
-        ForUrl(self.inner.url.as_ref()).fmt(f)?;
+        if let Some(url) = &self.inner.url {
+            write!(f, " for url ({url})")?;
+        }
 
-        if let Some(ref e) = self.inner.source {
-            write!(f, ": {}", e)?;
+        if let Some(e) = &self.inner.source {
+            write!(f, ": {e}")?;
         }
 
         Ok(())
@@ -213,7 +230,7 @@ impl From<crate::error::Error> for wasm_bindgen::JsValue {
 #[cfg(target_arch = "wasm32")]
 impl From<crate::error::Error> for js_sys::Error {
     fn from(err: Error) -> js_sys::Error {
-        js_sys::Error::new(&format!("{}", err))
+        js_sys::Error::new(&format!("{err}"))
     }
 }
 
@@ -225,6 +242,7 @@ pub(crate) enum Kind {
     Status(StatusCode),
     Body,
     Decode,
+    Upgrade,
 }
 
 // constructors
@@ -254,13 +272,21 @@ pub(crate) fn status_code(url: Url, status: StatusCode) -> Error {
 }
 
 pub(crate) fn url_bad_scheme(url: Url) -> Error {
-    Error::new(Kind::Builder, Some("URL scheme is not allowed")).with_url(url)
+    Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
+}
+
+pub(crate) fn url_invalid_uri(url: Url) -> Error {
+    Error::new(Kind::Builder, Some("Parsed Url is not a valid Uri")).with_url(url)
 }
 
 if_wasm! {
     pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
-        format!("{:?}", js_val).into()
+        format!("{js_val:?}").into()
     }
+}
+
+pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
+    Error::new(Kind::Upgrade, Some(e))
 }
 
 // io::Error helpers
@@ -294,6 +320,17 @@ impl fmt::Display for TimedOut {
 }
 
 impl StdError for TimedOut {}
+
+#[derive(Debug)]
+pub(crate) struct BadScheme;
+
+impl fmt::Display for BadScheme {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("URL scheme is not allowed")
+    }
+}
+
+impl StdError for BadScheme {}
 
 #[cfg(test)]
 mod tests {
@@ -329,7 +366,7 @@ mod tests {
         // It should have pulled out the original, not nested it...
         match err.inner.kind {
             Kind::Request => (),
-            _ => panic!("{:?}", err),
+            _ => panic!("{err:?}"),
         }
     }
 
@@ -339,7 +376,7 @@ mod tests {
         let err = super::decode_io(orig);
         match err.inner.kind {
             Kind::Decode => (),
-            _ => panic!("{:?}", err),
+            _ => panic!("{err:?}"),
         }
     }
 

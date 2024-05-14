@@ -1,20 +1,30 @@
-use pkg_config;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
 use super::env;
 
-pub fn get_openssl(target: &str) -> (PathBuf, PathBuf) {
+pub fn get_openssl(target: &str) -> (Vec<PathBuf>, PathBuf) {
     let lib_dir = env("OPENSSL_LIB_DIR").map(PathBuf::from);
     let include_dir = env("OPENSSL_INCLUDE_DIR").map(PathBuf::from);
 
     match (lib_dir, include_dir) {
-        (Some(lib_dir), Some(include_dir)) => (lib_dir, include_dir),
+        (Some(lib_dir), Some(include_dir)) => (vec![lib_dir], include_dir),
         (lib_dir, include_dir) => {
             let openssl_dir = env("OPENSSL_DIR").unwrap_or_else(|| find_openssl_dir(target));
             let openssl_dir = Path::new(&openssl_dir);
-            let lib_dir = lib_dir.unwrap_or_else(|| openssl_dir.join("lib"));
+            let lib_dir = lib_dir.map(|d| vec![d]).unwrap_or_else(|| {
+                let mut lib_dirs = vec![];
+                // OpenSSL 3.0 now puts it's libraries in lib64/ by default,
+                // check for both it and lib/.
+                if openssl_dir.join("lib64").exists() {
+                    lib_dirs.push(openssl_dir.join("lib64"));
+                }
+                if openssl_dir.join("lib").exists() {
+                    lib_dirs.push(openssl_dir.join("lib"));
+                }
+                lib_dirs
+            });
             let include_dir = include_dir.unwrap_or_else(|| openssl_dir.join("include"));
             (lib_dir, include_dir)
         }
@@ -22,7 +32,7 @@ pub fn get_openssl(target: &str) -> (PathBuf, PathBuf) {
 }
 
 fn resolve_with_wellknown_homebrew_location(dir: &str) -> Option<PathBuf> {
-    let versions = ["openssl@3", "openssl@1.1"];
+    let versions = ["openssl@3", "openssl@3.0", "openssl@1.1"];
 
     // Check up default aarch 64 Homebrew installation location first
     // for quick resolution if possible.
@@ -82,8 +92,8 @@ fn find_openssl_dir(target: &str) -> OsString {
     try_pkg_config();
     try_vcpkg();
 
-    // FreeBSD ships with OpenSSL but doesn't include a pkg-config file :(
-    if host == target && target.contains("freebsd") {
+    // FreeBSD and OpenBSD ship with Libre|OpenSSL but don't include a pkg-config file
+    if host == target && (target.contains("freebsd") || target.contains("openbsd")) {
         return OsString::from("/usr");
     }
 
@@ -188,19 +198,17 @@ fn try_pkg_config() {
     let target = env::var("TARGET").unwrap();
     let host = env::var("HOST").unwrap();
 
-    // If we're going to windows-gnu we can use pkg-config, but only so long as
-    // we're coming from a windows host.
-    //
-    // Otherwise if we're going to windows we probably can't use pkg-config.
+    // FIXME we really shouldn't be automatically enabling this
     if target.contains("windows-gnu") && host.contains("windows") {
         env::set_var("PKG_CONFIG_ALLOW_CROSS", "1");
-    } else if target.contains("windows") {
+    } else if target.contains("windows-msvc") {
+        // MSVC targets use vcpkg instead.
         return;
     }
 
     let lib = match pkg_config::Config::new()
         .print_system_libs(false)
-        .find("openssl")
+        .probe("openssl")
     {
         Ok(lib) => lib,
         Err(e) => {
@@ -209,7 +217,7 @@ fn try_pkg_config() {
         }
     };
 
-    super::validate_headers(&lib.include_paths);
+    super::postprocess(&lib.include_paths);
 
     for include in lib.include_paths.iter() {
         println!("cargo:include={}", include.display());
@@ -222,22 +230,27 @@ fn try_pkg_config() {
 ///
 /// Note that if this succeeds then the function does not return as vcpkg
 /// should emit all of the cargo metadata that we need.
-#[cfg(target_env = "msvc")]
 fn try_vcpkg() {
-    // vcpkg will not emit any metadata if it can not find libraries
-    // appropriate for the target triple with the desired linkage.
-
-    let lib = vcpkg::Config::new()
-        .emit_includes(true)
-        .find_package("openssl");
-
-    if let Err(e) = lib {
-        println!("note: vcpkg did not find openssl: {}", e);
+    let target = env::var("TARGET").unwrap();
+    if !target.contains("windows") {
         return;
     }
 
-    let lib = lib.unwrap();
-    super::validate_headers(&lib.include_paths);
+    // vcpkg will not emit any metadata if it can not find libraries
+    // appropriate for the target triple with the desired linkage.
+
+    let lib = match vcpkg::Config::new()
+        .emit_includes(true)
+        .find_package("openssl")
+    {
+        Ok(lib) => lib,
+        Err(e) => {
+            println!("note: vcpkg did not find openssl: {}", e);
+            return;
+        }
+    };
+
+    super::postprocess(&lib.include_paths);
 
     println!("cargo:rustc-link-lib=user32");
     println!("cargo:rustc-link-lib=gdi32");
@@ -245,9 +258,6 @@ fn try_vcpkg() {
 
     process::exit(0);
 }
-
-#[cfg(not(target_env = "msvc"))]
-fn try_vcpkg() {}
 
 fn execute_command_and_get_output(cmd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output();

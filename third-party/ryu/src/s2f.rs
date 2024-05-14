@@ -1,6 +1,8 @@
-use crate::common::*;
+use crate::common::{ceil_log2_pow5, log2_pow5};
 use crate::f2s;
-use crate::f2s_intrinsics::*;
+use crate::f2s_intrinsics::{
+    mul_pow5_div_pow2, mul_pow5_inv_div_pow2, multiple_of_power_of_2_32, multiple_of_power_of_5_32,
+};
 use crate::parse::Error;
 #[cfg(feature = "no-panic")]
 use no_panic::no_panic;
@@ -220,7 +222,7 @@ pub fn s2f(buffer: &[u8]) -> Result<f32, Error> {
         // for overflow here.
         ieee_e2 += 1;
     }
-    let ieee = ((((signed_m as u32) << f2s::FLOAT_EXPONENT_BITS) | ieee_e2 as u32)
+    let ieee = ((((signed_m as u32) << f2s::FLOAT_EXPONENT_BITS) | ieee_e2)
         << f2s::FLOAT_MANTISSA_BITS)
         | ieee_m2;
     Ok(f32::from_bits(ieee))

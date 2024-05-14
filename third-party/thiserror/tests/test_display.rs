@@ -1,6 +1,6 @@
-#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::needless_raw_string_hashes, clippy::uninlined_format_args)]
 
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use thiserror::Error;
 
 fn assert<T: Display>(expected: &str, value: T) {
@@ -144,6 +144,35 @@ fn test_match() {
 }
 
 #[test]
+fn test_nested_display() {
+    // Same behavior as the one in `test_match`, but without String allocations.
+    #[derive(Error, Debug)]
+    #[error("{}", {
+        struct Msg<'a>(&'a String, &'a Option<usize>);
+        impl<'a> Display for Msg<'a> {
+            fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                match self.1 {
+                    Some(n) => write!(formatter, "error occurred with {}", n),
+                    None => write!(formatter, "there was an empty error"),
+                }?;
+                write!(formatter, ": {}", self.0)
+            }
+        }
+        Msg(.0, .1)
+    })]
+    struct Error(String, Option<usize>);
+
+    assert(
+        "error occurred with 1: ...",
+        Error("...".to_owned(), Some(1)),
+    );
+    assert(
+        "there was an empty error: ...",
+        Error("...".to_owned(), None),
+    );
+}
+
+#[test]
 fn test_void() {
     #[allow(clippy::empty_enum)]
     #[derive(Error, Debug)]
@@ -271,4 +300,59 @@ fn test_keyword() {
     struct Error;
 
     assert("error: 1", Error);
+}
+
+#[test]
+fn test_str_special_chars() {
+    #[derive(Error, Debug)]
+    pub enum Error {
+        #[error("brace left {{")]
+        BraceLeft,
+        #[error("brace left 2 \x7B\x7B")]
+        BraceLeft2,
+        #[error("brace left 3 \u{7B}\u{7B}")]
+        BraceLeft3,
+        #[error("brace right }}")]
+        BraceRight,
+        #[error("brace right 2 \x7D\x7D")]
+        BraceRight2,
+        #[error("brace right 3 \u{7D}\u{7D}")]
+        BraceRight3,
+        #[error(
+            "new_\
+line"
+        )]
+        NewLine,
+        #[error("escape24 \u{78}")]
+        Escape24,
+    }
+
+    assert("brace left {", Error::BraceLeft);
+    assert("brace left 2 {", Error::BraceLeft2);
+    assert("brace left 3 {", Error::BraceLeft3);
+    assert("brace right }", Error::BraceRight);
+    assert("brace right 2 }", Error::BraceRight2);
+    assert("brace right 3 }", Error::BraceRight3);
+    assert("new_line", Error::NewLine);
+    assert("escape24 x", Error::Escape24);
+}
+
+#[test]
+fn test_raw_str() {
+    #[derive(Error, Debug)]
+    pub enum Error {
+        #[error(r#"raw brace left {{"#)]
+        BraceLeft,
+        #[error(r#"raw brace left 2 \x7B"#)]
+        BraceLeft2,
+        #[error(r#"raw brace right }}"#)]
+        BraceRight,
+        #[error(r#"raw brace right 2 \x7D"#)]
+        BraceRight2,
+    }
+
+    assert(r#"raw brace left {"#, Error::BraceLeft);
+    assert(r#"raw brace left 2 \x7B"#, Error::BraceLeft2);
+    assert(r#"raw brace right }"#, Error::BraceRight);
+    assert(r#"raw brace right 2 \x7D"#, Error::BraceRight2);
 }

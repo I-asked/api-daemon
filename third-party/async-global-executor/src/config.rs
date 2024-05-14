@@ -42,7 +42,9 @@ impl GlobalExecutorConfig {
         self
     }
 
-    /// Use the specified value as the maximum number of threads.
+    /// Use the specified value as the maximum number of threads for async tasks.
+    /// To limit the maximum number of threads for blocking tasks, please use the
+    /// `BLOCKING_MAX_THREADS` environment variable.
     pub fn with_max_threads(mut self, max_threads: usize) -> Self {
         self.max_threads = Some(max_threads);
         self
@@ -62,7 +64,7 @@ impl GlobalExecutorConfig {
             .ok()
             .and_then(|threads| threads.parse().ok())
             .or(self.min_threads)
-            .unwrap_or_else(num_cpus::get)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
             .max(1);
         let max_threads = self.max_threads.unwrap_or(min_threads * 4).max(min_threads);
         Config {

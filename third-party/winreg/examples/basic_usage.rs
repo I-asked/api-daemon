@@ -1,9 +1,8 @@
-// Copyright 2015, Igor Shaula
+// Copyright 2023, Igor Shaula
 // Licensed under the MIT License <LICENSE or
 // http://opensource.org/licenses/MIT>. This file
 // may not be copied, modified, or distributed
 // except according to those terms.
-extern crate winreg;
 use std::io;
 use std::path::Path;
 use winreg::enums::*;
@@ -20,7 +19,7 @@ fn main() -> io::Result<()> {
     println!("info = {:?}", info);
     let mt = info.get_last_write_time_system();
     println!(
-        "last_write_time as winapi::um::minwinbase::SYSTEMTIME = {}-{:02}-{:02} {:02}:{:02}:{:02}",
+        "last_write_time as windows_sys::Win32::Foundation::SYSTEMTIME = {}-{:02}-{:02} {:02}:{:02}:{:02}",
         mt.wYear, mt.wMonth, mt.wDay, mt.wHour, mt.wMinute, mt.wSecond
     );
     println!(
@@ -42,6 +41,11 @@ fn main() -> io::Result<()> {
     let sz_val: String = key.get_value("TestSZ")?;
     key.delete_value("TestSZ")?;
     println!("TestSZ = {}", sz_val);
+
+    key.set_value("TestMultiSZ", &vec!["written", "by", "Rust"])?;
+    let multi_sz_val: Vec<String> = key.get_value("TestMultiSZ")?;
+    key.delete_value("TestMultiSZ")?;
+    println!("TestMultiSZ = {:?}", multi_sz_val);
 
     key.set_value("TestDWORD", &1_234_567_890u32)?;
     let dword_val: u32 = key.get_value("TestDWORD")?;

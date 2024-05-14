@@ -1,5 +1,69 @@
 # Change Log
 
+## {{4.5.0}}(https://github.com/sunng87/handlebars-rust/compare/4.4.0...4.5.0) - 2023-11-09
+
+* [Added] A set of optional string case helpers from @gabhijit, enabled via
+  feature `string_helpers` [#619]
+
+## [4.4.0](https://github.com/sunng87/handlebars-rust/compare/4.3.7...4.4.0) - 2023-09-01
+
+* [Changed] Updated rust-embed to 8.0.0
+
+## [4.3.7](https://github.com/sunng87/handlebars-rust/compare/4.3.6...4.3.7) - 2023-05-11
+
+* [Fixed] Use full quanlified name of `Result` in `handlebars_helper` macro [#578]
+* [Fixed] Allow single-quote JSON literal [#577]
+
+## [4.3.6](https://github.com/sunng87/handlebars-rust/compare/4.3.5...4.3.6) - 2022-12-21
+
+* [Fixed] Loading template files with multiple extensions, a bug introduced in
+  4.3.0 when refactoring directory source.
+
+## [4.3.5](https://github.com/sunng87/handlebars-rust/compare/4.3.4...4.3.5) - 2022-10-05
+
+* [Fixed] Partial context not affected when using with hash context, within a
+  each/with block [#536]
+
+## [4.3.4](https://github.com/sunng87/handlebars-rust/compare/4.3.3...4.3.4) - 2022-09-11
+
+* [Added] New `write_fmt` function for `Output` [#522]
+* [Added] `reason()` method for `TemplateError` to access underlying reason,
+  this replaces original direct `.reason` access.
+* [Changed] Direct access to `TemplateError`'s `reason` field is depreacted will
+  be removed in future.
+
+## [4.3.3](https://github.com/sunng87/handlebars-rust/compare/4.3.2...4.3.3) - 2022-07-20
+
+* [Fixed] Disable partial expression indentation with `{{~> partial}}` to
+  bring behavior closer in line with original javascript version. [#518]
+* [Fixed] Support for using partial context together with partial parameters
+  [#520]
+
+## [4.3.2](https://github.com/sunng87/handlebars-rust/compare/4.3.1...4.3.2) - 2022-07-14
+
+* [Added] Render functions that reuse `Context` for custom `std::io::Write`:
+  `render_with_context_to_write` and `render_template_with_context_to_write`
+
+## [4.3.1](https://github.com/sunng87/handlebars-rust/compare/4.3.0...4.3.1) - 2022-06-09
+
+* [Added] Added support for `{{~{variable}~}}` syntax [#509]
+
+## [4.3.0](https://github.com/sunng87/handlebars-rust/compare/4.2.2...4.3.0) - 2022-05-18
+
+* [Changed] update MSRV to 1.57 as rhai requires
+* [Fixed] Reimplemented indent support for partial expression `{{>
+  partial}}`, which is introduced in 4.2.0. The new implementation is
+  aligned with original javascript version, that every text line
+  generated from partial are indented as `{{> partial}}`
+  does. `prevent_indent` will turn-off this feature. [#505]
+* [Changed] changed error support library from quick_error to
+  thiserror
+
+## [4.2.2](https://github.com/sunng87/handlebars-rust/compare/4.2.1...4.2.2) - 2022-03-09
+
+* [Fixed] Block param scope leaked into partials [#496]
+* [Changed] Use Rust 2021 edition and update MSRV to 1.56
+
 ## [4.2.1](https://github.com/sunng87/handlebars-rust/compare/4.2.0...4.2.1) - 2022-01-17
 
 * [Fixed] Nested partial `@partial-block` referencing issue [#488]

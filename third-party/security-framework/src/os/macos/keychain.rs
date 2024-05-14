@@ -28,6 +28,7 @@ impl SecKeychain {
     /// Creates a `SecKeychain` object corresponding to the user's default
     /// keychain.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Result<Self> {
         unsafe {
             let mut keychain = ptr::null_mut();
@@ -48,13 +49,14 @@ impl SecKeychain {
 
     /// Opens a keychain from a file.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_name = path.as_ref().as_os_str().as_bytes();
-        // FIXME
-        let path_name = CString::new(path_name).unwrap();
+        let path_name = [
+            path.as_ref().as_os_str().as_bytes(),
+            std::slice::from_ref(&0)
+        ].concat();
 
         unsafe {
             let mut keychain = ptr::null_mut();
-            cvt(SecKeychainOpen(path_name.as_ptr(), &mut keychain))?;
+            cvt(SecKeychainOpen(path_name.as_ptr().cast(), &mut keychain))?;
             Ok(Self::wrap_under_create_rule(keychain))
         }
     }
@@ -64,7 +66,7 @@ impl SecKeychain {
     /// If a password is not specified, the user will be prompted to enter it.
     pub fn unlock(&mut self, password: Option<&str>) -> Result<()> {
         let (len, ptr, use_password) = match password {
-            Some(password) => (password.len(), password.as_ptr() as *const _, true),
+            Some(password) => (password.len(), password.as_ptr().cast(), true),
             None => (0, ptr::null(), false),
         };
 
@@ -73,7 +75,7 @@ impl SecKeychain {
                 self.as_concrete_TypeRef(),
                 len as u32,
                 ptr,
-                use_password as Boolean,
+                Boolean::from(use_password),
             ))
         }
     }
@@ -128,6 +130,7 @@ pub struct CreateOptions {
 impl CreateOptions {
     /// Creates a new builder with default options.
     #[inline(always)]
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -162,7 +165,7 @@ impl CreateOptions {
             let path_name = CString::new(path_name).unwrap();
 
             let (password, password_len) = match self.password {
-                Some(ref password) => (password.as_ptr() as *const c_void, password.len() as u32),
+                Some(ref password) => (password.as_ptr().cast::<c_void>(), password.len() as u32),
                 None => (ptr::null(), 0),
             };
 
@@ -176,7 +179,7 @@ impl CreateOptions {
                 path_name.as_ptr(),
                 password_len,
                 password,
-                self.prompt_user as Boolean,
+                Boolean::from(self.prompt_user),
                 access,
                 &mut keychain,
             ))?;
@@ -192,6 +195,7 @@ pub struct KeychainSettings(SecKeychainSettings);
 impl KeychainSettings {
     /// Creates a new `KeychainSettings` with default settings.
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self(SecKeychainSettings {
             version: SEC_KEYCHAIN_SETTINGS_VERS1,
@@ -206,7 +210,7 @@ impl KeychainSettings {
     /// Defaults to `false`.
     #[inline(always)]
     pub fn set_lock_on_sleep(&mut self, lock_on_sleep: bool) {
-        self.0.lockOnSleep = lock_on_sleep as Boolean;
+        self.0.lockOnSleep = Boolean::from(lock_on_sleep);
     }
 
     /// Sets the interval of time in seconds after which the keychain is
@@ -249,13 +253,13 @@ impl Drop for KeychainUserInteractionLock {
 
 #[cfg(test)]
 mod test {
-    use tempdir::TempDir;
+    use tempfile::tempdir;
 
     use super::*;
 
     #[test]
     fn create_options() {
-        let dir = TempDir::new("keychain").unwrap();
+        let dir = tempdir().unwrap();
 
         let mut keychain = CreateOptions::new()
             .password("foobar")

@@ -1,6 +1,5 @@
 //! Component range error
 
-use core::convert::TryFrom;
 use core::fmt;
 
 use crate::error;
@@ -27,6 +26,12 @@ impl ComponentRange {
     /// Obtain the name of the component whose value was out of range.
     pub const fn name(self) -> &'static str {
         self.name
+    }
+
+    /// Whether the value's permitted range is conditional, i.e. whether an input with this
+    /// value could have succeeded if the values of other components were different.
+    pub const fn is_conditional(self) -> bool {
+        self.conditional_range
     }
 }
 

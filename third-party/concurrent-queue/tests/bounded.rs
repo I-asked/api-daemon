@@ -1,7 +1,14 @@
+#![allow(clippy::bool_assert_comparison)]
+
+use concurrent_queue::{ConcurrentQueue, ForcePushError, PopError, PushError};
+
+#[cfg(not(target_family = "wasm"))]
+use easy_parallel::Parallel;
+#[cfg(not(target_family = "wasm"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use concurrent_queue::{ConcurrentQueue, PopError, PushError};
-use easy_parallel::Parallel;
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
 
 #[test]
 fn smoke() {
@@ -56,10 +63,11 @@ fn len_empty_full() {
     assert_eq!(q.is_full(), false);
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[test]
 fn len() {
-    const COUNT: usize = 25_000;
-    const CAP: usize = 1000;
+    const COUNT: usize = if cfg!(miri) { 50 } else { 25_000 };
+    const CAP: usize = if cfg!(miri) { 50 } else { 1000 };
 
     let q = ConcurrentQueue::bounded(CAP);
     assert_eq!(q.len(), 0);
@@ -129,8 +137,35 @@ fn close() {
 }
 
 #[test]
+fn force_push() {
+    let q = ConcurrentQueue::<i32>::bounded(5);
+
+    for i in 1..=5 {
+        assert_eq!(q.force_push(i), Ok(None));
+    }
+
+    assert!(!q.is_closed());
+    for i in 6..=10 {
+        assert_eq!(q.force_push(i), Ok(Some(i - 5)));
+    }
+    assert_eq!(q.pop(), Ok(6));
+    assert_eq!(q.force_push(11), Ok(None));
+    for i in 12..=15 {
+        assert_eq!(q.force_push(i), Ok(Some(i - 5)));
+    }
+
+    assert!(q.close());
+    assert_eq!(q.force_push(40), Err(ForcePushError(40)));
+    for i in 11..=15 {
+        assert_eq!(q.pop(), Ok(i));
+    }
+    assert_eq!(q.pop(), Err(PopError::Closed));
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
 fn spsc() {
-    const COUNT: usize = 100_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 100_000 };
 
     let q = ConcurrentQueue::bounded(3);
 
@@ -154,9 +189,10 @@ fn spsc() {
         .run();
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[test]
 fn mpmc() {
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 100 } else { 25_000 };
     const THREADS: usize = 4;
 
     let q = ConcurrentQueue::<usize>::bounded(3);
@@ -185,9 +221,11 @@ fn mpmc() {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[test]
 fn drops() {
-    const RUNS: usize = 100;
+    const RUNS: usize = if cfg!(miri) { 10 } else { 100 };
+    const STEPS: usize = if cfg!(miri) { 100 } else { 10_000 };
 
     static DROPS: AtomicUsize = AtomicUsize::new(0);
 
@@ -201,7 +239,7 @@ fn drops() {
     }
 
     for _ in 0..RUNS {
-        let steps = fastrand::usize(..10_000);
+        let steps = fastrand::usize(..STEPS);
         let additional = fastrand::usize(..50);
 
         DROPS.store(0, Ordering::SeqCst);
@@ -232,19 +270,102 @@ fn drops() {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[test]
 fn linearizable() {
-    const COUNT: usize = 25_000;
+    const COUNT: usize = if cfg!(miri) { 500 } else { 25_000 };
     const THREADS: usize = 4;
 
     let q = ConcurrentQueue::bounded(THREADS);
 
     Parallel::new()
-        .each(0..THREADS, |_| {
+        .each(0..THREADS / 2, |_| {
             for _ in 0..COUNT {
                 while q.push(0).is_err() {}
                 q.pop().unwrap();
             }
         })
+        .each(0..THREADS / 2, |_| {
+            for _ in 0..COUNT {
+                if q.force_push(0).unwrap().is_none() {
+                    q.pop().unwrap();
+                }
+            }
+        })
         .run();
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn spsc_ring_buffer() {
+    const COUNT: usize = if cfg!(miri) { 200 } else { 100_000 };
+
+    let t = AtomicUsize::new(1);
+    let q = ConcurrentQueue::<usize>::bounded(3);
+    let v = (0..COUNT).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>();
+
+    Parallel::new()
+        .add(|| loop {
+            match t.load(Ordering::SeqCst) {
+                0 if q.is_empty() => break,
+
+                _ => {
+                    while let Ok(n) = q.pop() {
+                        v[n].fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        })
+        .add(|| {
+            for i in 0..COUNT {
+                if let Ok(Some(n)) = q.force_push(i) {
+                    v[n].fetch_add(1, Ordering::SeqCst);
+                }
+            }
+
+            t.fetch_sub(1, Ordering::SeqCst);
+        })
+        .run();
+
+    for c in v {
+        assert_eq!(c.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn mpmc_ring_buffer() {
+    const COUNT: usize = if cfg!(miri) { 100 } else { 25_000 };
+    const THREADS: usize = 4;
+
+    let t = AtomicUsize::new(THREADS);
+    let q = ConcurrentQueue::<usize>::bounded(3);
+    let v = (0..COUNT).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>();
+
+    Parallel::new()
+        .each(0..THREADS, |_| loop {
+            match t.load(Ordering::SeqCst) {
+                0 if q.is_empty() => break,
+
+                _ => {
+                    while let Ok(n) = q.pop() {
+                        v[n].fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        })
+        .each(0..THREADS, |_| {
+            for i in 0..COUNT {
+                if let Ok(Some(n)) = q.force_push(i) {
+                    v[n].fetch_add(1, Ordering::SeqCst);
+                }
+            }
+
+            t.fetch_sub(1, Ordering::SeqCst);
+        })
+        .run();
+
+    for c in v {
+        assert_eq!(c.load(Ordering::SeqCst), THREADS);
+    }
 }

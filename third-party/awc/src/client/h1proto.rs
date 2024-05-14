@@ -18,12 +18,11 @@ use futures_core::{ready, Stream};
 use futures_util::SinkExt as _;
 use pin_project_lite::pin_project;
 
-use crate::BoxError;
-
 use super::{
     connection::{ConnectionIo, H1Connection},
     error::{ConnectError, SendRequestError},
 };
+use crate::BoxError;
 
 pub(crate) async fn send_request<Io, B>(
     io: H1Connection<Io>,
@@ -57,7 +56,7 @@ where
                         headers.insert(HOST, value);
                     }
                 },
-                Err(e) => log::error!("Can not set HOST header {}", e),
+                Err(err) => log::error!("Can not set HOST header {err}"),
             }
         }
     }
@@ -83,12 +82,12 @@ where
         false
     };
 
-    framed.send((head, body.size()).into()).await?;
-
     let mut pin_framed = Pin::new(&mut framed);
 
     // special handle for EXPECT request.
     let (do_send, mut res_head) = if is_expect {
+        pin_framed.send((head, body.size()).into()).await?;
+
         let head = poll_fn(|cx| pin_framed.as_mut().poll_next(cx))
             .await
             .ok_or(ConnectError::Disconnected)??;
@@ -97,13 +96,17 @@ where
         // and current head would be used as final response head.
         (head.status == StatusCode::CONTINUE, Some(head))
     } else {
+        pin_framed.feed((head, body.size()).into()).await?;
+
         (true, None)
     };
 
     if do_send {
         // send request body
         match body.size() {
-            BodySize::None | BodySize::Sized(0) => {}
+            BodySize::None | BodySize::Sized(0) => {
+                poll_fn(|cx| pin_framed.as_mut().flush(cx)).await?;
+            }
             _ => send_body(body, pin_framed.as_mut()).await?,
         };
 

@@ -3,7 +3,7 @@
 #![cfg(all(
     feature = "accept",
     feature = "connect",
-    feature = "rustls",
+    feature = "rustls-0_22",
     feature = "openssl"
 ))]
 
@@ -14,19 +14,19 @@ use std::io::{BufReader, Write};
 use actix_rt::net::TcpStream;
 use actix_server::TestServer;
 use actix_service::ServiceFactoryExt as _;
-use actix_tls::accept::rustls::{Acceptor, TlsStream};
-use actix_tls::connect::openssl::reexports::SslConnector;
+use actix_tls::{
+    accept::rustls_0_22::{reexports::ServerConfig, Acceptor, TlsStream},
+    connect::openssl::reexports::SslConnector,
+};
 use actix_utils::future::ok;
 use rustls_pemfile::{certs, pkcs8_private_keys};
+use rustls_pki_types_1::PrivateKeyDer;
 use tls_openssl::ssl::SslVerifyMode;
-use tokio_rustls::rustls::{self, Certificate, PrivateKey, ServerConfig};
 
 fn new_cert_and_key() -> (String, String) {
-    let cert = rcgen::generate_simple_self_signed(vec![
-        "127.0.0.1".to_owned(),
-        "localhost".to_owned(),
-    ])
-    .unwrap();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_owned(), "localhost".to_owned()])
+            .unwrap();
 
     let key = cert.serialize_private_key_pem();
     let cert = cert.serialize_pem().unwrap();
@@ -34,19 +34,20 @@ fn new_cert_and_key() -> (String, String) {
     (cert, key)
 }
 
-fn rustls_server_config(cert: String, key: String) -> rustls::ServerConfig {
+fn rustls_server_config(cert: String, key: String) -> ServerConfig {
     // Load TLS key and cert files
 
     let cert = &mut BufReader::new(cert.as_bytes());
     let key = &mut BufReader::new(key.as_bytes());
 
-    let cert_chain = certs(cert).unwrap().into_iter().map(Certificate).collect();
-    let mut keys = pkcs8_private_keys(key).unwrap();
+    let cert_chain = certs(cert).collect::<Result<Vec<_>, _>>().unwrap();
+    let mut keys = pkcs8_private_keys(key)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
 
     let mut config = ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(cert_chain, PrivateKey(keys.remove(0)))
+        .with_single_cert(cert_chain, PrivateKeyDer::Pkcs8(keys.remove(0)))
         .unwrap();
 
     config.alpn_protocols = vec![b"http/1.1".to_vec()];

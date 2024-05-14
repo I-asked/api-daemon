@@ -117,10 +117,7 @@ characters. Vietnamese tone marks can be decomposed using the
 
 ## Licensing
 
-TL;DR: ((Apache-2.0 OR MIT) AND BSD-3-Clause) for the code and data combination,
-but [crates.io doesn't support
-parentheses](https://github.com/rust-lang/crates.io/issues/2595), so the crate
-metadata points to a custom file.
+TL;DR: `(Apache-2.0 OR MIT) AND BSD-3-Clause` for the code and data combination.
 
 Please see the file named
 [COPYRIGHT](https://github.com/hsivonen/encoding_rs/blob/master/COPYRIGHT).
@@ -170,13 +167,15 @@ There are currently these optional cargo features:
 
 ### `simd-accel`
 
-Enables SIMD acceleration using the nightly-dependent `packed_simd_2` crate.
+Enables SIMD acceleration using the nightly-dependent `portable_simd` standard
+library feature.
 
 This is an opt-in feature, because enabling this feature _opts out_ of Rust's
 guarantees of future compilers compiling old code (aka. "stability story").
 
 Currently, this has not been tested to be an improvement except for these
-targets:
+targets and enabling the `simd-accel` feature is expected to break the build
+on other targets:
 
 * x86_64
 * i686
@@ -187,22 +186,6 @@ If you use nightly Rust, you use targets whose first component is one of the
 above, and you are prepared _to have to revise your configuration when updating
 Rust_, you should enable this feature. Otherwise, please _do not_ enable this
 feature.
-
-_Note!_ If you are compiling for a target that does not have 128-bit SIMD
-enabled as part of the target definition and you are enabling 128-bit SIMD
-using `-C target_feature`, you need to enable the `core_arch` Cargo feature
-for `packed_simd_2` to compile a crates.io snapshot of `core_arch` instead of
-using the standard-library copy of `core::arch`, because the `core::arch`
-module of the pre-compiled standard library has been compiled with the
-assumption that the CPU doesn't have 128-bit SIMD. At present this applies
-mainly to 32-bit ARM targets whose first component does not include the
-substring `neon`.
-
-The encoding_rs side of things has not been properly set up for POWER,
-PowerPC, MIPS, etc., SIMD at this time, so even if you were to follow
-the advice from the previous paragraph, you probably shouldn't use
-the `simd-accel` option on the less mainstream architectures at this
-time.
 
 Used by Firefox.
 
@@ -384,8 +367,9 @@ as semver-breaking, because this crate depends on `cfg-if`, which doesn't
 appear to treat MSRV changes as semver-breaking, so it would be useless for
 this crate to treat MSRV changes as semver-breaking.
 
-As of 2021-02-04, MSRV appears to be Rust 1.36.0 for using the crate and
+As of 2024-04-04, MSRV appears to be Rust 1.36.0 for using the crate and
 1.42.0 for doc tests to pass without errors about the global allocator.
+With the `simd-accel` feature, the MSRV is even higher.
 
 ## Compatibility with rust-encoding
 
@@ -448,10 +432,31 @@ To regenerate the generated code:
       adapted to Rust in rust-encoding.~
 - [x] Add actually fast CJK encode options.
 - [ ] ~Investigate [Bob Steagall's lookup table acceleration for UTF-8](https://github.com/BobSteagall/CppNow2018/blob/master/FastConversionFromUTF-8/Fast%20Conversion%20From%20UTF-8%20with%20C%2B%2B%2C%20DFAs%2C%20and%20SSE%20Intrinsics%20-%20Bob%20Steagall%20-%20C%2B%2BNow%202018.pdf).~
-- [ ] Provide a build mode that works without `alloc` (with lesser API surface).
-- [ ] Migrate to `std::simd` once it is stable and declare 1.0.
+- [x] Provide a build mode that works without `alloc` (with lesser API surface).
+- [x] Migrate to `std::simd` ~once it is stable and declare 1.0.~
+- [ ] Migrate `unsafe` slice access by larger types than `u8`/`u16` to `align_to`.
 
 ## Release Notes
+
+### 0.8.34
+
+* Use the `portable_simd` nightly feature of the standard library instead of the `packed_simd` crate. Only affects the `simd-accel` optional nightly feature.
+* Internal documentation improvements and minor code improvements around `unsafe`.
+* Added `rust-version` to `Cargo.toml`.
+
+### 0.8.33
+
+* Use `packed_simd` instead of `packed_simd_2` again now that updates are back under the `packed_simd` name. Only affects the `simd-accel` optional nightly feature.
+
+### 0.8.32
+
+* Removed `build.rs`. (This removal should resolve false positives reported by some antivirus products. This may break some build configurations that have opted out of Rust's guarantees against future build breakage.)
+* Internal change to what API is used for reinterpreting the lane configuration of SIMD vectors.
+* Documentation improvements.
+
+### 0.8.31
+
+* Use SPDX with parentheses now that crates.io supports parentheses.
 
 ### 0.8.30
 

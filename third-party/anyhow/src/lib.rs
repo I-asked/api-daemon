@@ -2,7 +2,7 @@
 //!
 //! [github]: https://img.shields.io/badge/github-8da0cb?style=for-the-badge&labelColor=555555&logo=github
 //! [crates-io]: https://img.shields.io/badge/crates.io-fc8d62?style=for-the-badge&labelColor=555555&logo=rust
-//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K
+//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs
 //!
 //! <br>
 //!
@@ -17,7 +17,7 @@
 //!   the return type of any fallible function.
 //!
 //!   Within the function, use `?` to easily propagate any error that implements
-//!   the `std::error::Error` trait.
+//!   the [`std::error::Error`] trait.
 //!
 //!   ```
 //!   # pub trait Deserialize {}
@@ -128,11 +128,10 @@
 //!   # ;
 //!   ```
 //!
-//! - If using the nightly channel, or stable with `features = ["backtrace"]`, a
-//!   backtrace is captured and printed with the error if the underlying error
-//!   type does not already provide its own. In order to see backtraces, they
-//!   must be enabled through the environment variables described in
-//!   [`std::backtrace`]:
+//! - If using Rust &ge; 1.65, a backtrace is captured and printed with the
+//!   error if the underlying error type does not already provide its own. In
+//!   order to see backtraces, they must be enabled through the environment
+//!   variables described in [`std::backtrace`]:
 //!
 //!   - If you want panics and errors to both have backtraces, set
 //!     `RUST_BACKTRACE=1`;
@@ -140,10 +139,7 @@
 //!   - If you want only panics to have backtraces, set `RUST_BACKTRACE=1` and
 //!     `RUST_LIB_BACKTRACE=0`.
 //!
-//!   The tracking issue for this feature is [rust-lang/rust#53487].
-//!
 //!   [`std::backtrace`]: https://doc.rust-lang.org/std/backtrace/index.html#environment-variables
-//!   [rust-lang/rust#53487]: https://github.com/rust-lang/rust/issues/53487
 //!
 //! - Anyhow works with any error type that has an impl of `std::error::Error`,
 //!   including ones defined in your crate. We do not bundle a `derive(Error)`
@@ -196,8 +192,8 @@
 //!
 //! # No-std support
 //!
-//! In no_std mode, the same API is almost all available and works the same way.
-//! To depend on Anyhow in no_std mode, disable our default enabled "std"
+//! In no_std mode, almost all of the same API is available and works the same
+//! way. To depend on Anyhow in no_std mode, disable our default enabled "std"
 //! feature in Cargo.toml. A global allocator is required.
 //!
 //! ```toml
@@ -210,14 +206,23 @@
 //! will require an explicit `.map_err(Error::msg)` when working with a
 //! non-Anyhow error type inside a function that returns Anyhow's error type.
 
-#![doc(html_root_url = "https://docs.rs/anyhow/1.0.55")]
-#![cfg_attr(backtrace, feature(backtrace))]
+#![doc(html_root_url = "https://docs.rs/anyhow/1.0.83")]
+#![cfg_attr(error_generic_member_access, feature(error_generic_member_access))]
 #![cfg_attr(doc_cfg, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![deny(dead_code, unused_imports, unused_mut)]
+#![cfg_attr(
+    not(anyhow_no_unsafe_op_in_unsafe_fn_lint),
+    deny(unsafe_op_in_unsafe_fn)
+)]
+#![cfg_attr(anyhow_no_unsafe_op_in_unsafe_fn_lint, allow(unused_unsafe))]
 #![allow(
     clippy::doc_markdown,
     clippy::enum_glob_use,
+    clippy::explicit_auto_deref,
+    clippy::extra_unused_type_parameters,
+    clippy::incompatible_msrv,
+    clippy::let_underscore_untyped,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
     clippy::module_name_repetitions,
@@ -226,13 +231,24 @@
     clippy::new_ret_no_self,
     clippy::redundant_else,
     clippy::return_self_not_must_use,
+    clippy::struct_field_names,
     clippy::unused_self,
     clippy::used_underscore_binding,
     clippy::wildcard_imports,
     clippy::wrong_self_convention
 )]
 
+#[cfg(all(
+    anyhow_nightly_testing,
+    feature = "std",
+    not(error_generic_member_access)
+))]
+compile_error!("Build script probe failed to compile.");
+
 extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
 
 #[macro_use]
 mod backtrace;
@@ -263,6 +279,7 @@ trait StdError: Debug + Display {
     }
 }
 
+#[doc(no_inline)]
 pub use anyhow as format_err;
 
 /// The `Error` type, a wrapper around a dynamic error type.
@@ -633,21 +650,27 @@ pub fn Ok<T>(t: T) -> Result<T> {
 
 // Not public API. Referenced by macro-generated code.
 #[doc(hidden)]
-pub mod private {
+pub mod __private {
     use crate::Error;
     use alloc::fmt;
     use core::fmt::Arguments;
 
+    #[doc(hidden)]
     pub use crate::ensure::{BothDebug, NotBothDebug};
+    #[doc(hidden)]
     pub use alloc::format;
+    #[doc(hidden)]
     pub use core::result::Result::Err;
+    #[doc(hidden)]
     pub use core::{concat, format_args, stringify};
 
     #[doc(hidden)]
     pub mod kind {
+        #[doc(hidden)]
         pub use crate::kind::{AdhocKind, TraitKind};
 
         #[cfg(feature = "std")]
+        #[doc(hidden)]
         pub use crate::kind::BoxedKind;
     }
 
@@ -667,5 +690,13 @@ pub mod private {
             // anyhow!("interpolate {var}"), can downcast to String
             Error::msg(fmt::format(args))
         }
+    }
+
+    #[doc(hidden)]
+    #[inline]
+    #[cold]
+    #[must_use]
+    pub fn must_use(error: Error) -> Error {
+        error
     }
 }

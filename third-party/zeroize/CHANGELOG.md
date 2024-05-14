@@ -4,6 +4,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.7.0 (2023-11-16)
+### Changed
+- Bump MSRV to 1.60 ([#900])
+
+## 1.6.1 (2023-11-15) [YANKED]
+
+NOTE: yanked because [#900] bumped MSRV to 1.60, which vioates our MSRV policy.
+
+### Added
+- Impl `Zeroize` for `MaybeUninit` ([#900])
+
+### Removed
+- Unnecessary `cfg`s on SIMD type impls ([#930])
+
+[#900]: https://github.com/RustCrypto/utils/pull/900
+[#930]: https://github.com/RustCrypto/utils/pull/930
+
+## 1.6.0 (2023-03-26)
+### Added
+- Impl `Zeroize` for `core::num::Wrapping` ([#818])
+- Impl `Zeroize` for `str` and `Box<str>` ([#842])
+
+### Changed
+- 2021 edition upgrade; MSRV 1.56 ([#869])
+
+[#818]: https://github.com/RustCrypto/utils/pull/818
+[#842]: https://github.com/RustCrypto/utils/pull/842
+[#869]: https://github.com/RustCrypto/utils/pull/869
+
+## 1.5.7 (2022-07-20)
+### Added
+- Optional `serde` support ([#780])
+
+[#780]: https://github.com/RustCrypto/utils/pull/780
+
+## 1.5.6 (2022-06-29)
+### Added
+- `#[inline(always)]` annotations ([#772])
+- `#[ignore]` attribute on flaky CString test ([#776])
+
+### Changed
+- Factor integration tests into `tests/` ([#771])
+
+[#771]: https://github.com/RustCrypto/utils/pull/771
+[#772]: https://github.com/RustCrypto/utils/pull/772
+[#776]: https://github.com/RustCrypto/utils/pull/776
+
+## 1.5.5 (2022-04-30)
+### Added
+- Impl `Zeroize` for std::ffi::CString ([#759])
+- `AsRef<T>` and `AsMut<T>` impls for `Zeroizing` ([#761])
+
+[#759]: https://github.com/RustCrypto/utils/pull/759
+[#761]: https://github.com/RustCrypto/utils/pull/761
+
+## 1.5.4 (2022-03-16)
+### Added
+- Nightly-only upport for zeroizing ARM64 SIMD registers ([#749])
+
+[#749]: https://github.com/RustCrypto/utils/pull/749
+
 ## 1.5.3 (2022-02-25)
 ### Fixed
 - Deriving `ZeroizeOnDrop` on `DerefMut` ([#739])
