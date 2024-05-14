@@ -12,15 +12,6 @@ cmd() {
 
 set -e
 
-if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ];
-then
-       CC=cc
-       XCFLAGS=
-else
-       source ../../utils.sh
-       setup_xcompile_envs
-fi
-
 # Download and enter C library directory
 if ! [ -e "${C_LIBRARY_DIR}/.git" ];
 then
@@ -54,6 +45,6 @@ fi
 
 cmd ${cmake_prog} -DCMAKE_BUILD_TYPE="${cmake_build_type}" \
           -DCMAKE_C_COMPILER="${CC}" \
-          -DCMAKE_C_FLAGS="-fPIC -O${OPT_LEVEL} ${XCFLAGS}" "${cmake_library_dir}"
+          -DCMAKE_C_FLAGS="-fPIC -O${OPT_LEVEL}" "${cmake_library_dir}"
 cmd make -j"${NUM_JOBS}"
 
